@@ -123,11 +123,12 @@ public sealed class Scanner(LibraryDb db)
                                     !known.TryGetValue(f.Path, out var k) || k.Mtime != f.Mtime || k.Size != f.Size)
                         .Select(f => f.Path).ToList();
 
-        // Gone files are marked before the new ones are saved, so a song folder renamed or moved is found as the
-        // projects it was (see LibraryDb.MovedFrom), not as new ones. A scan stopped while finding them marks nothing.
-        // A folder that couldn't be read this time (busy, or its permissions changing) keeps its projects as they were.
-        ct.ThrowIfCancellationRequested();
-        db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots), unreadable);
+        // Gone files are only marked missing once every project is read, so a scan stopped part way leaves them as they
+        // were: the plugins' project counts and Clean up never miss songs whose new place isn't read yet. Till then the new
+        // ones are saved knowing which are gone, so a song folder renamed or moved is found as the projects it was (see
+        // LibraryDb.MovedFrom), not as new ones.
+        var present = files.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var gone = db.GoneFiles(present, roots, f => IsIgnored(f, roots), unreadable);
 
         // Read the projects on every core; save them here, in path order, a batch at a time,
         // so a new numbered save always finds the earlier ones it takes its status from.
@@ -147,13 +148,16 @@ public sealed class Scanner(LibraryDb db)
             if (a is not null) batch.Add(a);
             if (batch.Count >= 50 || Environment.TickCount64 - lastReport > 250)
             {
-                db.UpsertInRoots(batch);
+                db.UpsertInRoots(batch, gone);
                 batch.Clear();
                 progress?.Report(new("Reading projects", done, todo.Count, a?.Path ?? ""));
                 lastReport = Environment.TickCount64;
             }
         }
-        db.UpsertInRoots(batch);
+        db.UpsertInRoots(batch, gone);
+        ct.ThrowIfCancellationRequested();
+        // A folder that couldn't be read this time (busy, or its permissions changing) keeps its projects as they were.
+        db.MarkMissingFiles(present, roots, f => IsIgnored(f, roots), unreadable);
         foreach (var r in Readers.All) db.SetSetting(ReaderVersionKey(r), r.Version.ToString());
         db.SetSetting(KeyVersionKey, ProjectKey.Version.ToString());
         progress?.Report(new("Done", files.Count, files.Count, ""));

@@ -291,9 +291,13 @@ public sealed partial class LibraryDb : IDisposable
     /// the scan was still reading it. The folders are looked at inside the save, so projects taken off the list with
     /// their folder never come back from a scan that started before.
     /// </summary>
-    public void UpsertInRoots(IReadOnlyCollection<IndexedFile> files) => UpsertMany(files, inRoots: true);
+    /// <param name="gone">
+    /// The projects the scan didn't find, not marked missing yet (see <see cref="GoneFiles"/>): a new file can be one of
+    /// them moved, as it can one marked missing. One found is taken off.
+    /// </param>
+    public void UpsertInRoots(IReadOnlyCollection<IndexedFile> files, HashSet<long>? gone = null) => UpsertMany(files, inRoots: true, gone);
 
-    void UpsertMany(IReadOnlyCollection<IndexedFile> files, bool inRoots)
+    void UpsertMany(IReadOnlyCollection<IndexedFile> files, bool inRoots, HashSet<long>? gone = null)
     {
         if (files.Count == 0) return;
         var installed = InstalledKeys();
@@ -305,7 +309,7 @@ public sealed partial class LibraryDb : IDisposable
             foreach (var f in files)
             {
                 if (inRoots && !roots.Any(r => Space.DiskSpace.IsInside(f.Path, r))) continue;
-                Upsert(tx, f, installed);
+                Upsert(tx, f, installed, gone);
                 saved++;
             }
             tx.Commit();
@@ -313,7 +317,7 @@ public sealed partial class LibraryDb : IDisposable
         if (saved > 0) ProjectsChanged();
     }
 
-    void Upsert(SqliteTransaction tx, IndexedFile f, HashSet<string> installed)
+    void Upsert(SqliteTransaction tx, IndexedFile f, HashSet<string> installed, HashSet<long>? gone = null)
     {
         var info = f.Info;
         bool isNew;
@@ -323,13 +327,14 @@ public sealed partial class LibraryDb : IDisposable
             isNew = (long)cmd.ExecuteScalar()! == 0;
         }
         var daw = info?.Daw ?? Readers.For(f.Path)?.Daw ?? "Unknown";
-        if (isNew && MovedFrom(tx, f, daw) is { } moved)
+        if (isNew && MovedFrom(tx, f, daw, gone) is { } moved)
         {
             // The same file moved here (its song folder renamed or moved): it carries on as that project, with your
             // status, rating, notes and tags, rather than starting blank beside a "file moved" copy of itself.
             using var cmd = Cmd("UPDATE projects SET path = $p WHERE id = $id", ("$p", f.Path), ("$id", moved));
             cmd.Transaction = tx;
             cmd.ExecuteNonQuery();
+            gone?.Remove(moved);
             isNew = false;
         }
         var infoJson = info is null ? "{}" : JsonSerializer.Serialize(new StoredInfo(info.Tracks, info.Details, info.Warnings));
@@ -397,19 +402,21 @@ public sealed partial class LibraryDb : IDisposable
     }
 
     /// <summary>
-    /// The project marked missing that this new file is, moved: the one missing project of the same DAW with the same
-    /// file name, size and modified time (a move keeps those). Null when there's none, or more than one to choose from.
+    /// The project marked missing that this new file is, moved: the one missing project (or one the scan didn't find,
+    /// <paramref name="gone"/>) of the same DAW with the same file name, size and modified time (a move keeps those).
+    /// Null when there's none, or more than one to choose from.
     /// </summary>
-    long? MovedFrom(SqliteTransaction tx, IndexedFile f, string daw)
+    long? MovedFrom(SqliteTransaction tx, IndexedFile f, string daw, IReadOnlySet<long>? gone)
     {
         using var cmd = Cmd("""
-            SELECT id FROM projects
-            WHERE file_missing = 1 AND daw = $daw AND name = $name COLLATE NOCASE AND size = $size AND mtime = $mtime LIMIT 2
+            SELECT id, file_missing FROM projects
+            WHERE daw = $daw AND name = $name COLLATE NOCASE AND size = $size AND mtime = $mtime
             """, ("$daw", daw), ("$name", Path.GetFileNameWithoutExtension(f.Path)), ("$size", f.Size), ("$mtime", f.Mtime));
         cmd.Transaction = tx;
         var ids = new List<long>();
         using (var r = cmd.ExecuteReader())
-            while (r.Read()) ids.Add(r.GetInt64(0));
+            while (r.Read())
+                if (r.GetInt64(1) == 1 || gone?.Contains(r.GetInt64(0)) == true) ids.Add(r.GetInt64(0));
         return ids.Count == 1 ? ids[0] : null;
     }
 
@@ -496,6 +503,25 @@ public sealed partial class LibraryDb : IDisposable
     public void MarkMissingFiles(IReadOnlySet<string> present, IReadOnlyList<string> roots, Func<string, bool>? ignored = null,
                                  IEnumerable<string>? unreadable = null)
     {
+        var (gone, dropped) = Unfound(present, roots, ignored, unreadable);
+        // A batch of commits rather than one for each of thousands of files.
+        InBatches(dropped, "DELETE FROM projects WHERE id = $id", ["$id"], (id, p) => p[0].Value = id);
+        InBatches(gone, "UPDATE projects SET file_missing = 1 WHERE id = $id", ["$id"], (id, p) => p[0].Value = id);
+        if (dropped.Count + gone.Count > 0) ProjectsChanged();
+    }
+
+    /// <summary>
+    /// The projects <see cref="MarkMissingFiles"/> would mark missing, left as they are. A scan marks them only once it has
+    /// read every project, so one stopped part way changes nothing, and saves what it reads with them meanwhile (see
+    /// <see cref="UpsertInRoots"/>), so a song folder renamed or moved is still found as the projects it was.
+    /// </summary>
+    public HashSet<long> GoneFiles(IReadOnlySet<string> present, IReadOnlyList<string> roots, Func<string, bool>? ignored = null,
+                                   IEnumerable<string>? unreadable = null) =>
+        Unfound(present, roots, ignored, unreadable).Gone.ToHashSet();
+
+    (List<long> Gone, List<long> Dropped) Unfound(IReadOnlySet<string> present, IReadOnlyList<string> roots, Func<string, bool>? ignored,
+                                                  IEnumerable<string>? unreadable)
+    {
         var unread = unreadable?.ToList() ?? [];
         var rows = Query("SELECT id, path FROM projects WHERE file_missing = 0", r => (Id: (long)r["id"], Path: (string)r["path"]));
         var gone = new List<long>();
@@ -507,10 +533,7 @@ public sealed partial class LibraryDb : IDisposable
                 unread.Any(folder => Space.DiskSpace.IsInside(path, folder))) continue;
             (ignored?.Invoke(path) == true ? dropped : gone).Add(id);
         }
-        // A batch of commits rather than one for each of thousands of files.
-        InBatches(dropped, "DELETE FROM projects WHERE id = $id", ["$id"], (id, p) => p[0].Value = id);
-        InBatches(gone, "UPDATE projects SET file_missing = 1 WHERE id = $id", ["$id"], (id, p) => p[0].Value = id);
-        if (dropped.Count + gone.Count > 0) ProjectsChanged();
+        return (gone, dropped);
     }
 
     /// <summary>A project file that has gone (deleted, or moved out of your folders): it stays listed, marked missing.</summary>

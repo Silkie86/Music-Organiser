@@ -845,6 +845,33 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void A_scan_stopped_while_reading_a_renamed_folder_marks_none_of_its_songs_missing()
+    {
+        // Stopped half way through a renamed folder, the songs whose new place wasn't read yet still count where they
+        // were: marked missing, a plugin only they use would look unused, and Clean up would tick its sounds.
+        var folder = Directory.CreateDirectory(Path.Combine(_root, "Album")).FullName;
+        for (var i = 0; i < 120; i++) Fixtures.FlStudioProject(folder, $"Tune {(char)('a' + i % 26)}{(char)('a' + i / 26)}");
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        var before = _db.Projects().Where(p => p.Name.StartsWith("Tune ")).ToDictionary(p => p.Name, p => p.Id);
+        Directory.Move(folder, folder + " (done)");
+        using var stop = new CancellationTokenSource();
+        var reading = new Each<ScanProgress>(p => { if (p.Stage == "Reading projects") stop.Cancel(); });
+        Assert.ThrowsAny<OperationCanceledException>(() => scanner.ScanProjects(reading, ct: stop.Token));
+        var songs = _db.Projects().Where(p => p.Name.StartsWith("Tune ")).ToList();
+        Assert.Equal(120, songs.Count);
+        Assert.DoesNotContain(songs, p => p.FileMissing);
+        Assert.Contains(songs, p => p.Path.StartsWith(folder + " (done)"));   // what it read was found moved
+        Assert.Contains(songs, p => p.Path.StartsWith(folder + Path.DirectorySeparatorChar));   // the rest wait for the next scan
+
+        // The next scan finishes: each song carries on as itself in its new place.
+        scanner.ScanProjects();
+        songs = _db.Projects().Where(p => p.Name.StartsWith("Tune ")).ToList();
+        Assert.Equal(120, songs.Count);
+        Assert.All(songs, p => Assert.Equal((before[p.Name], false, true), (p.Id, p.FileMissing, p.Path.StartsWith(folder + " (done)"))));
+    }
+
+    [Fact]
     public void Projects_in_a_folder_the_scan_couldnt_read_arent_marked_missing()
     {
         new Scanner(_db).ScanProjects();
