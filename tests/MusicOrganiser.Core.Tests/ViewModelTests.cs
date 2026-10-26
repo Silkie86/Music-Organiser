@@ -738,6 +738,24 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Revealing_an_archived_song_shows_it_in_the_list_it_picks_it_in()
+    {
+        ScanFixtures();
+        var projects = Main().Projects;
+        var song = projects.Items.Single(i => i.Daw == "Bitwig Studio");
+        song.Status = "Archived";
+        projects.Reload();
+        song = projects.Items.Single(i => i.Daw == "Bitwig Studio");
+        Assert.DoesNotContain(song, projects.View.Cast<ProjectItem>());   // hidden while "Hide archived" is on
+
+        projects.Reveal(song.Id);
+
+        Assert.Same(song, projects.Selected);
+        Assert.Contains(song, projects.View.Cast<ProjectItem>());
+        Assert.False(projects.HideArchived);
+    }
+
+    [Fact]
     public void A_reload_filters_the_projects_list_once_while_the_filter_chips_are_refilled()
     {
         ScanFixtures();

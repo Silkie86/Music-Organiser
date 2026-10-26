@@ -403,6 +403,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
         var item = Items.FirstOrDefault(i => i.Id == id || i.OlderSaves.Any(o => o.Id == id));
         if (item is null) return;
         if (!Filter(item)) ClearFilters();
+        if (!Filter(item)) HideArchived = false;   // an archived song: Clear filters leaves "Hide archived" as it is
         Selected = item;
     }
 
