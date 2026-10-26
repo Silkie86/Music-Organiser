@@ -16,6 +16,9 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     public BulkCollection<ProjectItem> Items { get; } = new();
     public IItemsView View { get; }
 
+    /// <summary>The app's shortcut list, whose keys the song's right-click menu shows.</summary>
+    public ShortcutsViewModel Shortcuts => _main.Shortcuts;
+
     public static IReadOnlyList<string> StatusChoices => Statuses.All;
     public static IReadOnlyList<int> RatingChoices { get; } = [0, 1, 2, 3, 4, 5];
     public static IReadOnlyList<string> GroupChoices { get; } =

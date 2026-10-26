@@ -164,11 +164,17 @@
                             <ListBox x:Name="TileList" Classes="tiles" ItemsSource="{Binding TileRows}" IsVisible="{Binding IsTiles}"
                                      Background="Transparent" SizeChanged="OnTilesSizeChanged" Focusable="True">
                                 <ListBox.ContextMenu>
-                                    <ContextMenu>
-                                        <MenuItem Header="Play" Command="{Binding PlayCommand}" />
-                                        <MenuItem Header="To Bitwig" Command="{Binding ToBitwigCommand}"
+                                    <!-- The same lines as the list's menu; each Tag is the action whose key it shows. -->
+                                    <ContextMenu Opening="OnSoundMenuOpening">
+                                        <MenuItem Header="Play" Command="{Binding PlayCommand}" Tag="app.play" />
+                                        <MenuItem Header="To Bitwig" Command="{Binding ToBitwigCommand}" Tag="sounds.toBitwig"
                                                   ToolTip.Tip="Puts the sound on a Sampler on a new track in the project open in Bitwig" />
-                                        <MenuItem Header="Show file" Command="{Binding RevealCommand}" />
+                                        <MenuItem Header="Favourite" Command="{Binding ToggleFavouriteCommand}" Tag="sounds.favourite"
+                                                  ToolTip.Tip="Favourite the sound, or not" />
+                                        <MenuItem Header="Add a tag…" Click="OnTagMenu" Tag="sounds.tag" />
+                                        <Separator />
+                                        <MenuItem Header="Show file" Command="{Binding RevealCommand}" Tag="sounds.reveal" />
+                                        <MenuItem Header="Copy path" Command="{Binding CopyPathCommand}" Tag="sounds.copyPath" />
                                     </ContextMenu>
                                 </ListBox.ContextMenu>
                                 <ListBox.ItemTemplate>
@@ -214,11 +220,16 @@
                                       GridLinesVisibility="None" Background="Transparent" views:FileDrag.Source="{Binding}"
                                       DoubleTapped="OnGridDoubleTapped" Sorting="OnGridSorting">
                                 <DataGrid.ContextMenu>
-                                    <ContextMenu>
-                                        <MenuItem Header="Play" Command="{Binding PlayCommand}" />
-                                        <MenuItem Header="To Bitwig" Command="{Binding ToBitwigCommand}"
+                                    <ContextMenu Opening="OnSoundMenuOpening">
+                                        <MenuItem Header="Play" Command="{Binding PlayCommand}" Tag="app.play" />
+                                        <MenuItem Header="To Bitwig" Command="{Binding ToBitwigCommand}" Tag="sounds.toBitwig"
                                                   ToolTip.Tip="Puts the sound on a Sampler on a new track in the project open in Bitwig" />
-                                        <MenuItem Header="Show file" Command="{Binding RevealCommand}" />
+                                        <MenuItem Header="Favourite" Command="{Binding ToggleFavouriteCommand}" Tag="sounds.favourite"
+                                                  ToolTip.Tip="Favourite the sound, or not" />
+                                        <MenuItem Header="Add a tag…" Click="OnTagMenu" Tag="sounds.tag" />
+                                        <Separator />
+                                        <MenuItem Header="Show file" Command="{Binding RevealCommand}" Tag="sounds.reveal" />
+                                        <MenuItem Header="Copy path" Command="{Binding CopyPathCommand}" Tag="sounds.copyPath" />
                                     </ContextMenu>
                                 </DataGrid.ContextMenu>
                                 <DataGrid.Columns>

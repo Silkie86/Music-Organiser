@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using MusicOrganiser.Core.Sounds;
 using MusicOrganiser.ViewModels;
@@ -18,7 +19,7 @@ public partial class SoundsView : UserControl, IShortcutPage
         // change: the grid re-selects rows by itself when you sort or come back to this page.
         SoundGrid.AddHandler(PointerReleasedEvent, OnRowClicked, RoutingStrategies.Bubble, handledEventsToo: true);
         SoundGrid.AddHandler(PointerPressedEvent, OnPressCounted, RoutingStrategies.Tunnel, handledEventsToo: true);
-        // A right-click picks the row under it, so its menu (Play, To Bitwig, Show file) is about that sound.
+        // A right-click picks the row under it, so its menu (Play, To Bitwig, Favourite…) is about that sound.
         SoundGrid.AddHandler(PointerPressedEvent, OnRowRightPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
         // Held arrow keys play each sound they pass (after the grid has moved on to it); letting go plays the one you stop on.
         SoundGrid.AddHandler(KeyDownEvent, OnGridKeyPacing, RoutingStrategies.Tunnel);
@@ -109,6 +110,18 @@ public partial class SoundsView : UserControl, IShortcutPage
     {
         if (e.PropertyName == nameof(SoundsViewModel.ColumnSort)) ShowColumnSort();
     }
+
+    // ---- right-click menus ----
+
+    /// <summary>Each line shows its key as it is now (Settings › Shortcuts can change them).</summary>
+    void OnSoundMenuOpening(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (sender is ContextMenu menu && Vm is { } vm) ShortcutKeys.ShowKeys(menu.Items, vm.Shortcuts);
+    }
+
+    // Once the menu has closed, so the keyboard stays in the box rather than going back to the list.
+    void OnTagMenu(object? sender, RoutedEventArgs e) =>
+        Dispatcher.UIThread.Post(() => RunShortcut("sounds.tag", false), DispatcherPriority.Input);
 
     // ---- list order ----
 

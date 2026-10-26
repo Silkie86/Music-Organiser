@@ -54,27 +54,9 @@ public partial class PlaygroundView
         {
             if (item.Tag is not string id) continue;
             item.IsEnabled = vm.CanRun(id);
-            item.InputGesture = Gesture(vm.Shortcuts.KeyOf(id));
+            item.InputGesture = ShortcutKeys.Gesture(vm.Shortcuts.KeyOf(id));
             if (item.ToggleType == MenuItemToggleType.CheckBox) item.IsChecked = vm.IsTicked(id);
         }
-    }
-
-    /// <summary>A key from the shortcut list as a menu shows it ("Ctrl+D"), or none when it has no key or can't be shown.</summary>
-    static KeyGesture? Gesture(string key)
-    {
-        if (key.Length == 0 || key == "?") return null;
-        // the last part is the key, the rest are Ctrl, Shift and Alt; keys set in Settings can be any of these
-        var cut = key.Length > 1 && key.EndsWith('+') ? key.Length - 1 : key.LastIndexOf('+') + 1;
-        var last = key[cut..] switch
-        {
-            "=" => "OemPlus", "-" => "OemMinus", "," => "OemComma", "." => "OemPeriod", "/" => "OemQuestion",
-            "[" => "OemOpenBrackets", "]" => "OemCloseBrackets", ";" => "OemSemicolon", "'" => "OemQuotes",
-            "Esc" => "Escape", "Enter" => "Return", "Backspace" => "Back",
-            [var c] when char.IsDigit(c) => "D" + c,
-            var k => k,
-        };
-        try { return KeyGesture.Parse(key[..cut] + last); }
-        catch (Exception e) when (e is ArgumentException or FormatException or KeyNotFoundException) { return null; }
     }
 
     void ShowMenu(Control at, IReadOnlyList<PlaygroundMenuItem> lines)

@@ -1,6 +1,7 @@
 using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using MusicOrganiser.Core.Library;
@@ -84,6 +85,59 @@ public sealed class SoundsPageTests : IDisposable
         Settle();
         Assert.Equal("BPM", bpm.Header);
         Assert.Equal(["Loop A", "Loop B", "Loop C", "Loop D"], OnScreen());
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_sound_menus_and_the_sidebars_rescan_menu_show_each_lines_key()
+    {
+        // Review: these menus showed no keys, and left out Favourite, Tag and Copy path; Rescan everything couldn't have a key.
+        _soundDb.Save([new SoundLibrary.Analysed(Path.Combine(_root, "Kick.wav"), 1, 1, new SoundAnalysis { Features = [1, 0, 0] }, null, null, null)]);
+        _sounds.Reload();
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var window = new MainWindow { DataContext = main, Width = 1440, Height = 900 };
+        window.Show();
+        main.GoTo("Sound Lab");
+        main.Sounds.ReloadAsync().GetAwaiter().GetResult();
+        var lab = main.Sounds;
+        lab.ViewMode = SoundsViewModel.List;
+        Settle();
+        lab.Selected = lab.Shown[0];
+        Settle();
+        var page = window.GetVisualDescendants().OfType<SoundsView>().First();
+        var grid = page.FindControl<DataGrid>("SoundGrid")!;
+
+        KeyGesture? Key(ContextMenu menu, string header) => menu.Items.OfType<MenuItem>().Single(i => (string?)i.Header == header).InputGesture;
+        var menu = grid.ContextMenu!;
+        grid.RaiseEvent(new ContextRequestedEventArgs());   // a right-click, which is when a menu says it is opening
+        Settle();
+        Assert.Equal(KeyGesture.Parse("Space"), Key(menu, "Play"));
+        Assert.Equal(KeyGesture.Parse("Ctrl+B"), Key(menu, "To Bitwig"));
+        Assert.Equal(KeyGesture.Parse("Ctrl+D"), Key(menu, "Favourite"));
+        Assert.Equal(KeyGesture.Parse("Ctrl+T"), Key(menu, "Add a tag…"));
+        Assert.Equal(KeyGesture.Parse("Ctrl+Shift+E"), Key(menu, "Show file"));
+        Assert.Equal(KeyGesture.Parse("Ctrl+Shift+C"), Key(menu, "Copy path"));
+
+        // Add a tag puts the keyboard in the tag box once the menu has gone.
+        menu.Items.OfType<MenuItem>().Single(i => (string?)i.Header == "Add a tag…").RaiseEvent(new global::Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+        menu.Close();
+        Settle();
+        Assert.True(page.FindControl<TextBox>("TagBox")!.IsFocused);
+
+        // The tiles' menu is the same, and Rescan everything takes a key like any other action.
+        lab.ViewMode = SoundsViewModel.Tiles;
+        Settle();
+        var tiles = page.FindControl<ListBox>("TileList")!;
+        tiles.RaiseEvent(new ContextRequestedEventArgs());
+        Settle();
+        Assert.Equal(KeyGesture.Parse("Ctrl+D"), Key(tiles.ContextMenu!, "Favourite"));
+        tiles.ContextMenu.Close();
+        main.Shortcuts.Set("app.fullRescan", "Ctrl+F5");
+        var rescan = window.GetVisualDescendants().OfType<Button>().Single(b => b.ContextMenu?.Items.OfType<MenuItem>().Any(i => (string?)i.Tag == "app.fullRescan") == true);
+        rescan.RaiseEvent(new ContextRequestedEventArgs());
+        Settle();
+        Assert.Equal(KeyGesture.Parse("Ctrl+F5"), Key(rescan.ContextMenu!, "Rescan everything"));
+        rescan.ContextMenu.Close();
         window.Close();
     }
 }

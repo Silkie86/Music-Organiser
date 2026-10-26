@@ -28,6 +28,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     public KitViewModel Kit { get; }
     /// <summary>The Duplicates tab: copies of the same sound across your sample folders.</summary>
     public DuplicatesViewModel Duplicates { get; }
+    /// <summary>The app's shortcut list, whose keys the sounds' right-click menus show.</summary>
+    public ShortcutsViewModel Shortcuts => _main.Shortcuts;
 
     public static IReadOnlyList<string> AllTypes { get; } = [.. SoundTypes.All, SoundTypes.Unknown];
     public static IReadOnlyList<string> KeyChoices { get; } = ["Any key", .. Enumerable.Range(0, 12).Select(t => MusicTheory.KeyName(t, false, true)), .. Enumerable.Range(0, 12).Select(t => MusicTheory.KeyName(t, true, true))];

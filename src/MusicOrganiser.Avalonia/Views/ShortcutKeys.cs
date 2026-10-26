@@ -64,6 +64,34 @@ public static class ShortcutKeys
 
     /// <summary>The box the key was pressed in, if any.</summary>
     public static TextBox? Box(KeyEventArgs e) => e.Source as TextBox ?? (e.Source as Visual)?.FindAncestorOfType<TextBox>();
+
+    /// <summary>A key from the shortcut list as a menu shows it ("Ctrl+D"), or none when it has no key or can't be shown.</summary>
+    public static KeyGesture? Gesture(string key)
+    {
+        if (key.Length == 0 || key == "?") return null;
+        // the last part is the key, the rest are Ctrl, Shift and Alt; keys set in Settings can be any of these
+        var cut = key.Length > 1 && key.EndsWith('+') ? key.Length - 1 : key.LastIndexOf('+') + 1;
+        var last = key[cut..] switch
+        {
+            "=" => "OemPlus", "-" => "OemMinus", "," => "OemComma", "." => "OemPeriod", "/" => "OemQuestion",
+            "[" => "OemOpenBrackets", "]" => "OemCloseBrackets", ";" => "OemSemicolon", "'" => "OemQuotes",
+            "Esc" => "Escape", "Enter" => "Return", "Backspace" => "Back",
+            [var c] when char.IsDigit(c) => "D" + c,
+            var k => k,
+        };
+        try { return KeyGesture.Parse(key[..cut] + last); }
+        catch (Exception e) when (e is ArgumentException or FormatException or KeyNotFoundException) { return null; }
+    }
+
+    /// <summary>
+    /// Each menu line whose Tag is an action's id ("sounds.favourite") shows that action's key as it is now, so a key
+    /// changed in Settings › Shortcuts shows the next time the menu opens.
+    /// </summary>
+    public static void ShowKeys(IEnumerable<object?> lines, ShortcutsViewModel keys)
+    {
+        foreach (var item in lines.OfType<MenuItem>())
+            if (item.Tag is string id) item.InputGesture = Gesture(keys.KeyOf(id));
+    }
 }
 
 /// <summary>

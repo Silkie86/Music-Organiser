@@ -38,6 +38,12 @@ public partial class MainWindow : Window
 
     void OnLeaveFullScreen(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e) => Shortcuts.ToggleFullScreen();
 
+    /// <summary>The sidebar's menu lines show their keys as they are now (Settings › Shortcuts can change them).</summary>
+    void OnMenuOpening(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (sender is ContextMenu menu && DataContext is ViewModels.MainViewModel main) Views.ShortcutKeys.ShowKeys(menu.Items, main.Shortcuts);
+    }
+
     /// <summary>The keys that work on every page, and each page's own (Settings › Shortcuts).</summary>
     public Views.AppShortcuts Shortcuts { get; }
 

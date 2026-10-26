@@ -18,6 +18,12 @@ public partial class ProjectsView : UserControl, IShortcutPage
         Grid.AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
         Search.AddHandler(KeyDownEvent, OnSearchKeyDown, RoutingStrategies.Tunnel);
         Grid.AddHandler(PointerPressedEvent, OnGridPointerPressed, RoutingStrategies.Tunnel);
+        // Each line's key as it is when the menu opens, so one changed in Settings › Shortcuts shows straight away.
+        if (Grid.ContextFlyout is MenuFlyout menu)
+            menu.Opening += (_, _) =>
+            {
+                if (Vm is { } vm) ShortcutKeys.ShowKeys(menu.Items, vm.Shortcuts);
+            };
     }
 
     // A right-click selects the song under the pointer first, so its menu is about that song.
