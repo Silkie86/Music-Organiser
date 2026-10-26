@@ -243,4 +243,26 @@ public class PlaygroundWholeAppReviewTests : IDisposable
         Assert.Null(p.Loop);
         Assert.Contains("no room", p.Message);
     }
+
+    [Fact]
+    public void Delete_after_picking_a_chord_is_for_the_clip_once_a_track_is_picked()
+    {
+        using var page = Fresh();
+        var p = page.P;
+        p.CurrentSection.Bars = 2;
+        p.CurrentSection.ChordTrack = [Block("Dm7", 0, Bar), Block("G7", Bar, Bar)];
+        Drop(p, Mid("Lead", Tune(2)), 0);
+        Drop(p, Mid("Tune", Tune(2)), p.Layers.Count);
+        p.PickChordCommand.Execute(p.Chords.First(c => c.IsSet));
+        p.SelectedLayer = p.Layers[0];   // the track list clicked
+        Assert.True(p.RunShortcut("playground.delete"));
+        Assert.Equal(2, p.CurrentSection.ChordTrack.Count);
+        Assert.Equal(["Tune"], p.Layers.Select(l => l.Name));
+
+        // A chord picked again: Delete is for it, until the bar numbers are clicked.
+        p.PickChordCommand.Execute(p.Chords.First(c => c.IsSet));
+        p.SetCursorCommand.Execute((long)Bar);
+        Assert.True(p.RunShortcut("playground.delete"));
+        Assert.Equal(2, p.CurrentSection.ChordTrack.Count);
+    }
 }

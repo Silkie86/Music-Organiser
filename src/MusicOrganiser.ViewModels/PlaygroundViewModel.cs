@@ -383,7 +383,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (PlaygroundSession.FromJson(json) is not { } s) return;
         _session = s;
         Show();
-        if (Loop is { } loop) SetLoop(loop);   // kept inside the timeline as it now is
+        if (Loop is { } loop) LoopOver(loop);   // kept inside the timeline as it now is
         Changed(harmony: false);
     }
 
@@ -528,7 +528,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
                 }
                 l.Render();
             }
-        if (Loop is { } loop) SetLoop(loop);   // kept inside the timeline, or dropped if it's now past the end
+        if (Loop is { } loop) LoopOver(loop);   // kept inside the timeline, or dropped if it's now past the end
         _showing = true;
         Bars = Section.Bars;
         _showing = false;
@@ -577,7 +577,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     internal void PickLabel(PlaygroundLabel? label)
     {
         SelectedLabel = label;
-        if (label is not null) SetLoop(new RollRange(label.Start, label.End));
+        if (label is not null) LoopOver(new RollRange(label.Start, label.End));
         _showing = true;
         FeelPick = FeelHere.ToString();
         _showing = false;
@@ -935,12 +935,12 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     {
         if (range is not { } r)
         {
-            SetLoop(null);
+            LoopOver(null);
             return;
         }
         long a = Math.Max(row.At + r.Start, row.Clip.Start), b = Math.Min(row.At + r.End, row.Clip.End);
         if (b <= a) return;
-        SetLoop(new RollRange(a, b));
+        LoopOver(new RollRange(a, b));
         if (SwapTarget is null) return;
         RightTab = SuggestTabIndex;
         Message = $"{LoopText} of {row.Clip.Name} picked: Suggest finds the bit of each part that fits there, and Swap in puts one in. Right-click the bar numbers to let go.";
@@ -966,7 +966,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (Matches.Count > 0 || target is not null) _ = FindMatchesAsync();
     }
 
-    partial void OnSelectedClipChanged(ClipRow? value) => SuggestFollow(false);
+    partial void OnSelectedClipChanged(ClipRow? value)
+    {
+        if (!_showing) _chordLaneLast = false;   // a clip picked (from the track list, or one just put in): Delete is for it now
+        SuggestFollow(false);
+    }
 
     /// <summary>
     /// Cuts <paramref name="from"/>–<paramref name="to"/> out of the clips on <paramref name="layer"/>, as a DAW does when
@@ -1501,6 +1505,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     partial void OnSelectedLayerChanged(LayerRow? value)
     {
+        if (!_showing) _chordLaneLast = false;   // a track picked: Delete is for its clip now
         // Picking a track picks its first clip, unless one of its clips is picked already.
         if (SelectedClip?.Track != value)
             SelectedClip = value is { Layer.Clips.Count: > 0 } t ? new ClipRow(this, t, t.Layer.Clips[0]) : null;
@@ -2248,8 +2253,16 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     }
     public string LoopText => Loop is { } r ? $"Bars {r.Start / Bar + 1}–{(r.End + Bar - 1) / Bar}" : "";
 
+    /// <summary>Bars highlighted on the timeline (or along the small playground's piano roll), or let go of: Delete is for the clip now.</summary>
     [RelayCommand]
     void SetLoop(RollRange? range)
+    {
+        _chordLaneLast = false;
+        LoopOver(range);
+    }
+
+    /// <summary>The highlight put over <paramref name="range"/> (kept inside the timeline), or taken off with null.</summary>
+    void LoopOver(RollRange? range)
     {
         Loop = range is { } r && Math.Clamp(r.End, 1, Length) > Math.Clamp(r.Start, 0, Length)
             ? new RollRange(Math.Clamp(r.Start, 0, Length), Math.Clamp(r.End, 1, Length)) : null;
@@ -2259,7 +2272,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     }
 
     [RelayCommand]
-    void ClearLoop() => SetLoop(null);
+    void ClearLoop() => LoopOver(null);
 
     /// <summary>The harmony suggestions are fitted to: the loop's bars when there are loop points, else the section.</summary>
     /// <summary>
@@ -2283,7 +2296,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     partial void OnCursorChanged(long value) { if (_playing) _ = PlayAsync(); }
 
     [RelayCommand]
-    void SetCursor(long tick) => Cursor = Math.Clamp(tick, 0, Math.Max(0, Length - 1));
+    void SetCursor(long tick)
+    {
+        _chordLaneLast = false;   // the bar numbers clicked: Delete is for the clip again
+        Cursor = Math.Clamp(tick, 0, Math.Max(0, Length - 1));
+    }
 
     [RelayCommand]
     void ToStart() => Cursor = 0;

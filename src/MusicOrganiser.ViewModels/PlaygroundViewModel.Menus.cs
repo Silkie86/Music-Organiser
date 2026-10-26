@@ -216,7 +216,7 @@ public sealed partial class PlaygroundViewModel
     void FindAlternatives(ClipRow row)
     {
         RightTab = SuggestTabIndex;
-        SetLoop(new RollRange(row.Clip.Start, row.Clip.End));
+        LoopOver(new RollRange(row.Clip.Start, row.Clip.End));
         Message = $"Parts that could replace {row.Clip.Name}: Swap in puts one there instead.";
     }
 
