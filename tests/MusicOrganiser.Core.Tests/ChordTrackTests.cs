@@ -223,6 +223,30 @@ public class ChordTrackTests : IDisposable
         Assert.Equal([71, 61, 67], nudged.Select(n => n.Key));
     }
 
+    [Theory]
+    [InlineData("F")]
+    [InlineData("F/A")]
+    public void An_arp_keeping_its_place_plays_the_new_chords_root(string to)
+    {
+        // A C E G C arp in sixteenths for two bars, over C then F: the second bar is an F arp, not C notes left behind.
+        var arp = Enumerable.Range(0, 32).Select(i => new NoteEvent(i * (long)(Ppq / 4), Ppq / 4, new[] { 48, 52, 55, 60 }[i % 4], 100)).ToList();
+        var played = ChordFollow.Apply(arp, Track("C", to), FollowWay.Auto, MidiRoles.Arp);
+        Assert.Equal(arp.Take(16), played.Take(16));
+        Assert.Equal([53, 57, 60, 65], played.Skip(16).Take(4).Select(n => n.Key));   // F A C F: the root stays the root
+    }
+
+    [Fact]
+    public void A_chord_put_on_a_slash_chord_keeps_its_root()
+    {
+        static List<NoteEvent> Hit(params int[] keys) => keys.Select(k => new NoteEvent(0, Bar, k, 100)).ToList();
+        // A close C triad on F/A is an F triad (the A is the bass part's to play), never A and C alone.
+        Assert.Equal([5, 9, 0], Groove.Revoice(Hit(60, 64, 67), Chord("C"), Chord("F/A")).Select(n => n.Key % 12));
+        // A root played apart in the left hand is the bass, so it plays the slash chord's bass.
+        var withBass = Groove.Revoice(Hit(36, 64, 67, 72), Chord("C"), Chord("F/A"));
+        Assert.Equal(9, withBass.Min(n => n.Key) % 12);
+        Assert.Equal([0, 5, 9], Pcs(withBass));
+    }
+
     [Fact]
     public void A_dropped_part_follows_the_chord_track_live_until_its_changed_by_hand()
     {

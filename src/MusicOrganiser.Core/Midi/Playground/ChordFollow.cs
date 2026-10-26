@@ -84,11 +84,12 @@ public static class ChordFollow
             var heardOver = hits.Select(h => (T: Over(track, h.Start, h.Length), S: Over(own, h.Start, h.Length))).ToList();
             // Moving with the root moves a riff or an arp note for note (Solomon, 2026-10-23: ARP House on "Move with root"):
             // whether it already sits on the track's chord is judged for everything it plays over that chord, not a note at a
-            // time, which would leave the notes that happen to fit behind.
-            var together = way != FollowWay.Root ? null
-                : Enumerable.Range(0, hits.Count).Where(i => heardOver[i] is { T: not null, S: not null })
-                    .GroupBy(i => (T: heardOver[i].T!.Value, S: heardOver[i].S!.Value))
-                    .ToDictionary(g => g.Key, g => SitsOn(g.SelectMany(i => hits[i].Notes).ToList(), track[g.Key.T].Chord, own[g.Key.S].Chord, style));
+            // time, which would leave the notes that happen to fit behind. Keeping their place, an arp's single notes are
+            // judged together the same way: one note alone fits most chords (C over F stays, so F is never played).
+            bool Together(int i) => way == FollowWay.Root || hits[i].Notes.Count == 1;
+            var together = Enumerable.Range(0, hits.Count).Where(i => heardOver[i] is { T: not null, S: not null } && Together(i))
+                .GroupBy(i => (T: heardOver[i].T!.Value, S: heardOver[i].S!.Value))
+                .ToDictionary(g => g.Key, g => SitsOn(g.SelectMany(i => hits[i].Notes).ToList(), track[g.Key.T].Chord, own[g.Key.S].Chord, style));
             for (var i = 0; i < hits.Count; i++)
             {
                 var hit = hits[i];
@@ -96,7 +97,7 @@ public static class ChordFollow
                 if (t is null || s is null) { list.AddRange(hit.Notes.Select(n => t is { } c ? Nudge(n, track[c].Chord, style) : n)); continue; }
                 // A hit that already sits on the track's chord stays as it is, as a line does: a rootless voicing over the
                 // bass's root (E G B D over C) is heard alone as another chord (Em7), but it is already the track's Cmaj9.
-                if (together?[(t.Value, s.Value)] ?? SitsOn(hit.Notes, track[t.Value].Chord, own[s.Value].Chord, style)) { list.AddRange(hit.Notes); continue; }
+                if (Together(i) ? together[(t.Value, s.Value)] : SitsOn(hit.Notes, track[t.Value].Chord, own[s.Value].Chord, style)) { list.AddRange(hit.Notes); continue; }
                 list.AddRange(Play(hit.Notes, own[s.Value].Chord, track[t.Value].Chord, way));
             }
             return Sorted(list);
@@ -109,7 +110,7 @@ public static class ChordFollow
             if (group.Key is not { } t) { list.AddRange(part); continue; }
             var target = track[t].Chord;
             if (Implied(part, target, bass) is not { } from) { list.AddRange(part.Select(n => Nudge(n, target, style))); continue; }
-            foreach (var n in part) list.AddRange(Play([n], from, target, way));
+            foreach (var n in part) list.AddRange(Play([n], from, target, way, bass));
         }
         return Sorted(list);
     }
@@ -157,8 +158,8 @@ public static class ChordFollow
         return hits.Count(h => h.Notes.Count >= 3) * 3 >= hits.Count;
     }
 
-    /// <summary>Notes struck over chord <paramref name="from"/> played on <paramref name="to"/>.</summary>
-    static List<NoteEvent> Play(IReadOnlyList<NoteEvent> hit, ChordSymbol from, ChordSymbol to, FollowWay way)
+    /// <summary>Notes struck over chord <paramref name="from"/> played on <paramref name="to"/>; <paramref name="bass"/> for a bassline's.</summary>
+    static List<NoteEvent> Play(IReadOnlyList<NoteEvent> hit, ChordSymbol from, ChordSymbol to, FollowWay way, bool bass = false)
     {
         if (way == FollowWay.Root)
         {
@@ -167,11 +168,13 @@ public static class ChordFollow
             return hit.Select(n => n with { Key = Math.Clamp(n.Key + shift, 0, 127) }).ToList();
         }
         if (hit.Count > 1) return Groove.Revoice(hit, from, to);
-        // A single note: the bass of the old chord is the bass of the new one; everything else keeps its place.
+        // A single note: the bass of the old chord is the bass of the new one (a bassline's root, or an old slash chord's
+        // bass); everything else keeps its place, so an arp's root stays the root on a slash chord.
         var note = hit[0];
         var moveBy = ChordSymbol.Mod(to.Root - from.Root);
         if (moveBy > 6) moveBy -= 12;
-        var pc = note.Key % 12 == from.Bass ? to.Bass : ChordSymbol.Mod(to.Root + Groove.Map(from, to, ChordSymbol.Mod(note.Key - from.Root)));
+        var isBass = note.Key % 12 == from.Bass && (bass || from.Bass != from.Root);
+        var pc = isBass ? to.Bass : ChordSymbol.Mod(to.Root + Groove.Map(from, to, ChordSymbol.Mod(note.Key - from.Root)));
         return [note with { Key = Groove.Nearest(pc, note.Key + moveBy) }];
     }
 

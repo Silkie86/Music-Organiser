@@ -235,12 +235,15 @@ public static class Groove
         var shift = ChordSymbol.Mod(to.Root - from.Root);
         if (shift > 6) shift -= 12;
         var lowest = hit.Min(n => n.Key);
+        // The root at the bottom is a bass when it stands apart, a fifth or more under the rest (as a left hand plays it);
+        // the bottom of a close voicing stays the root, a slash chord's bass left to the bass part.
+        var apart = hit.Where(n => n.Key > lowest).Select(n => n.Key).DefaultIfEmpty(lowest).Min() - lowest >= 7;
         var used = new HashSet<int>();
         foreach (var n in hit.OrderBy(n => n.Key))
         {
             var bass = n.Key == lowest && hit.Count > 1 && n.Key % 12 == from.Bass && from.Bass != from.Root;
             var pc = bass ? to.Bass : ChordSymbol.Mod(to.Root + Map(from, to, ChordSymbol.Mod(n.Key - from.Root)));
-            if (n.Key == lowest && n.Key % 12 == from.Root && hit.Count > 1) pc = to.Bass;   // the root in the bass stays the bass
+            if (n.Key == lowest && n.Key % 12 == from.Root && apart) pc = to.Bass;   // the root in the bass stays the bass
             var key = Nearest(pc, n.Key + shift);
             if (used.Add(key)) list.Add(n with { Key = key });
         }
