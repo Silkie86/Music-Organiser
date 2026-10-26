@@ -61,7 +61,11 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         var projects = library.GetSetting(OlderSavesKey) == "1" ? readable : SongVersions.Group(readable).Select(g => g.Latest);
         foreach (var p in projects)
             wanted[p.Path] = new MidiSource(p.Path, MidiSource.Project, p.Daw, p.Mtime, p.Size, p.Tempo);
-        var folders = library.GetList(FoldersKey).Where(Directory.Exists).ToList();
+        var listed = library.GetList(FoldersKey);
+        var folders = listed.Where(Directory.Exists).ToList();
+        // A folder that can't be reached now (its drive not plugged in) keeps what was read from it: it isn't gone, and
+        // reading and listening to all of it again when it's back would take hours.
+        var away = listed.Except(folders).Where(Path.IsPathFullyQualified).ToList();
         // Sizes and times come with the folder listing: no extra look at each of tens of thousands of files.
         // Not the "._" copies a Mac leaves beside each file (Niko's MIDI Pack had 1,221, each an error in the log).
         foreach (var f in Parallelism.FindFileStamps(folders, p => MidiFileReader.IsMidiPath(p) && !Parallelism.IsMacShadow(p),
@@ -74,7 +78,7 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
 
         var known = index.Sources();
         var failedBefore = retryFailed ? index.Failures().Select(f => f.Path).ToHashSet(StringComparer.OrdinalIgnoreCase) : [];
-        var forget = known.Keys.Where(k => !wanted.ContainsKey(k)).ToList();
+        var forget = known.Keys.Where(k => !wanted.ContainsKey(k) && !away.Any(f => Space.DiskSpace.IsInside(k, f))).ToList();
         if (forget.Count > 0) index.Forget(forget);
         var todo = new ConcurrentQueue<MidiSource>(wanted.Values
             .Where(s => !known.TryGetValue(s.Path, out var k) || k.Mtime != s.Mtime || k.Size != s.Size || k.Version != VersionFor(s) ||
@@ -85,7 +89,8 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
             AppLog.Info("MIDI", $"Finding new and changed files took {finding.Elapsed.TotalSeconds:0.0} s ({wanted.Count:N0} files, {total:N0} to read)");
         if (total == 0) return new(0, 0, forget.Count, 0);
 
-        var results = new BlockingCollection<(MidiSource, int, IReadOnlyList<IndexedPhrase>, string?)>(boundedCapacity: 256);
+        // Kept: another program had it open, so what was read from it before stays (KeepUnread).
+        var results = new BlockingCollection<(MidiSource Source, int Version, IReadOnlyList<IndexedPhrase> Phrases, string? Error, bool Kept)>(boundedCapacity: 256);
         int read = 0, failed = 0, phrases = 0;
         var threads = Enumerable.Range(0, Math.Min(Workers, total)).Select(i => new Thread(() =>
         {
@@ -116,14 +121,17 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
                         });
                         LogIfSlow(source, found.Count, Stopwatch.GetElapsedTime(asked, began), Stopwatch.GetElapsedTime(began),
                                   GC.GetTotalPauseDuration() - paused);
-                        results.Add((source, VersionFor(source), found, null), ct);
+                        results.Add((source, VersionFor(source), found, null, false), ct);
                     }
                     catch (OperationCanceledException) { break; }
                     catch (Exception e)   // one unreadable file never stops the rest
                     {
                         Interlocked.Increment(ref failed);
                         AppLog.Info("MIDI", $"Couldn't read {source.Path}: {Brief(e)}");
-                        try { results.Add((source, VersionFor(source), [], Why(e)), ct); }
+                        // Another program had it open for a moment (a backup, a virus check): its parts are kept and it's read
+                        // again next time, not left empty until it changes. Anything else (gone, not allowed, a cloud file that
+                        // won't download) is noted once, as before, not tried again and logged on every run.
+                        try { results.Add((source, VersionFor(source), [], Why(e), InUse(e)), ct); }
                         catch (OperationCanceledException) { break; }
                     }
                 }
@@ -143,7 +151,13 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         });
 
         // Saved here, a batch at a time, so the database is written from one place.
-        var batch = new List<(MidiSource, int, IReadOnlyList<IndexedPhrase>, string?)>();
+        var batch = new List<(MidiSource Source, int Version, IReadOnlyList<IndexedPhrase> Phrases, string? Error, bool Kept)>();
+        void Save()
+        {
+            index.ReplaceMany(batch.Where(r => !r.Kept).Select(r => (r.Source, r.Version, r.Phrases, r.Error)).ToList());
+            index.KeepUnread(batch.Where(r => r.Kept).Select(r => (r.Source, r.Version, r.Error ?? "")).ToList());
+            batch.Clear();
+        }
         var lastSave = Environment.TickCount64;
         try
         {
@@ -151,13 +165,12 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
             {
                 batch.Add(r);
                 read++;
-                phrases += r.Item3.Count;
+                phrases += r.Phrases.Count;
                 if (batch.Count >= 100 || Environment.TickCount64 - lastSave > 1000)
                 {
-                    index.ReplaceMany(batch);
-                    batch.Clear();
+                    Save();
                     lastSave = Environment.TickCount64;
-                    progress?.Report(new("Reading MIDI", read, total, Path.GetFileName(r.Item1.Path)));
+                    progress?.Report(new("Reading MIDI", read, total, Path.GetFileName(r.Source.Path)));
                 }
             }
         }
@@ -165,7 +178,7 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         {
             // Stopped or failed part way: the readers still waiting to hand a file over stop too.
             if (!results.IsAddingCompleted) results.CompleteAdding();
-            index.ReplaceMany(batch);
+            Save();
             waiter.Wait(CancellationToken.None);
         }
         ct.ThrowIfCancellationRequested();
@@ -200,6 +213,14 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
             ? $"{e.GetType().Name}: {e.Message}" +
               (new StackTrace(e, false).GetFrame(0)?.GetMethod() is { } at ? $" (in {at.DeclaringType?.Name}.{at.Name})" : "")
             : $"{e}";
+
+    /// <summary>
+    /// Another program has the file open and won't share it: Windows' sharing or lock violation (0x80070020, 0x80070021), or
+    /// the "would block" that .NET gives for the same on Linux and macOS. Not a missing file, a refused one or a damaged one.
+    /// </summary>
+    static bool InUse(Exception e) =>
+        e is IOException and not (FileNotFoundException or DirectoryNotFoundException or EndOfStreamException) &&
+        (OperatingSystem.IsWindows() ? (uint)e.HResult is 0x80070020 or 0x80070021 : e.HResult == (OperatingSystem.IsMacOS() ? 35 : 11));
 
     /// <summary>Why a file couldn't be read, in a few plain words, for the list of failed ones.</summary>
     public static string Why(Exception e) => e switch

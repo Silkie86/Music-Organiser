@@ -34,7 +34,6 @@ public sealed class VolumeFader : Control
         ToolTip.SetTip(this, "Volume: drag along it, scroll over it, or double-click for 0 dB");
     }
 
-    static int _gestures;
     int _gesture;
     bool _dragging;
 
@@ -50,7 +49,7 @@ public sealed class VolumeFader : Control
     {
         base.OnPointerPressed(e);
         if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
-        _gesture = ++_gestures;
+        _gesture = GestureIds.Next();
         e.Handled = true;
         if (e.ClickCount == 2) { Send(1, done: true); return; }
         _dragging = true;
@@ -85,7 +84,7 @@ public sealed class VolumeFader : Control
     {
         base.OnPointerWheelChanged(e);
         if (e.Delta.Y == 0) return;
-        _gesture = ++_gestures;
+        _gesture = GestureIds.Next();
         // a decibel a notch (the volume sounds as its square: 40·log10)
         var v = Math.Max(Value, 0.05) * Math.Pow(10, Math.Sign(e.Delta.Y) / 40.0);
         Send(v < 0.06 && e.Delta.Y < 0 ? 0 : v, done: true);

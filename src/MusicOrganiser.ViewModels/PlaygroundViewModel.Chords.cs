@@ -280,29 +280,33 @@ public sealed partial class PlaygroundViewModel
         ShowProgressions();
     }
 
-    /// <summary>The progressions that match the search and length, in the idea's key, the ones most songs play first.</summary>
+    int _showProgressionsRequest;
+
+    /// <summary>
+    /// The progressions that match the search and length, in the idea's key, the ones most songs play first. A big library
+    /// has a great many, so they're searched away from the screen (each key typed starts again) and only the rows shown are made.
+    /// </summary>
     void ShowProgressions()
     {
         if (_progressionsFrom is null) return;
         var key = Harmony.Key;
+        _progressionsKey = key?.Name;
+        _ = ShowProgressionsAsync(++_showProgressionsRequest, _progressions, key);
+    }
+
+    async Task ShowProgressionsAsync(int request, IReadOnlyList<Progression> all, KeyEstimate? key)
+    {
         var words = ProgressionSearch.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var bars = int.TryParse(ProgressionBars.Split(' ')[0], out var b) ? b : 0;
+        var found = await UiWork.Run(() => all.Where(p => (bars == 0 || p.Bars == bars) && ProgressionRow.MatchesAll(p, key, words))
+                                              .Take(MostProgressions).ToList());
+        if (request != _showProgressionsRequest) return;   // typed on meanwhile: the newer search shows its own
         var playing = Progressions.FirstOrDefault(r => r.IsPlaying)?.Progression;
         Progressions.Clear();
-        var shown = 0;
-        foreach (var p in _progressions)
-        {
-            if (bars > 0 && p.Bars != bars) continue;
-            var row = new ProgressionRow(this, p, key);
-            if (words.Length > 0 && !words.All(row.Matches)) continue;
-            row.IsPlaying = p == playing;
-            Progressions.Add(row);
-            if (++shown >= MostProgressions) break;
-        }
-        ProgressionsText = _progressions.Count == 0 ? "No chord parts read yet: add projects or MIDI folders on the MIDI page."
-            : shown == 0 ? $"None like that among the {_progressions.Count:N0} progressions in your chord parts. Try other chords or numerals."
-            : $"{_progressions.Count:N0} progressions in your chord parts, the ones most songs play first{(key is null ? "" : $", in {key.Name}")}.";
-        _progressionsKey = key?.Name;
+        foreach (var p in found) Progressions.Add(new ProgressionRow(this, p, key) { IsPlaying = p == playing });
+        ProgressionsText = all.Count == 0 ? "No chord parts read yet: add projects or MIDI folders on the MIDI page."
+            : found.Count == 0 ? $"None like that among the {all.Count:N0} progressions in your chord parts. Try other chords or numerals."
+            : $"{all.Count:N0} progressions in your chord parts, the ones most songs play first{(key is null ? "" : $", in {key.Name}")}.";
     }
 
     /// <summary>The example part's notes moved into the idea's key (as close as it goes, up or down).</summary>
@@ -495,10 +499,24 @@ public sealed partial class ProgressionRow(PlaygroundViewModel owner, Progressio
     public string PlayText => IsPlaying ? "■" : "▶";
 
     /// <summary>Whether a search word is in its chord names, its Roman numerals, or says major or minor.</summary>
-    public bool Matches(string word) =>
-        Names.Split(' ', StringSplitOptions.RemoveEmptyEntries).Any(n => n.StartsWith(word, StringComparison.OrdinalIgnoreCase)) ||
-        progression.Romans.Any(r => r.Equals(word, StringComparison.OrdinalIgnoreCase) || r.StartsWith(word, StringComparison.Ordinal)) ||
-        Mode.StartsWith(word, StringComparison.OrdinalIgnoreCase);
+    public bool Matches(string word) => InNumerals(progression, word) || InNames(Names, word);
+
+    /// <summary>
+    /// Whether every search word is in the progression's chord names in <paramref name="key"/>, its Roman numerals, or says
+    /// major or minor, as <see cref="Matches"/> has it; the names are only worked out when the numerals don't match.
+    /// </summary>
+    internal static bool MatchesAll(Progression p, KeyEstimate? key, IReadOnlyList<string> words)
+    {
+        string? names = null;
+        return words.All(w => InNumerals(p, w) || InNames(names ??= string.Join("  ", p.NamesIn(key)), w));
+    }
+
+    static bool InNumerals(Progression p, string word) =>
+        p.Romans.Any(r => r.Equals(word, StringComparison.OrdinalIgnoreCase) || r.StartsWith(word, StringComparison.Ordinal)) ||
+        (p.Minor ? "minor" : "major").StartsWith(word, StringComparison.OrdinalIgnoreCase);
+
+    static bool InNames(string names, string word) =>
+        names.Split(' ', StringSplitOptions.RemoveEmptyEntries).Any(n => n.StartsWith(word, StringComparison.OrdinalIgnoreCase));
 
     [RelayCommand] Task Play() => owner.PreviewProgression(this);
     [RelayCommand] Task Use() => owner.UseProgression(this);

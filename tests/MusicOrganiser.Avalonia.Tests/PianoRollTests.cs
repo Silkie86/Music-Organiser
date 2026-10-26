@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Avalonia.Views;
@@ -108,5 +109,22 @@ public sealed class PianoRollTests
         window.MouseDown(new Point(XOf(3 * Beat) + 2, up), MouseButton.Left);
         window.MouseUp(new Point(XOf(3 * Beat) + 2, up), MouseButton.Left);
         Assert.InRange(edits[^1].Single().Key, 61, 62);
+    }
+
+    [AvaloniaFact]
+    public void A_note_drag_cut_off_by_another_window_goes_back_and_changes_nothing()
+    {
+        var (window, roll, edits) = Roll();
+        IPointer? pointer = null;
+        roll.AddHandler(InputElement.PointerPressedEvent, (_, e) => pointer = e.Pointer, RoutingStrategies.Tunnel, handledEventsToo: true);
+        window.MouseDown(new Point(XOf(Beat / 2), Key60), MouseButton.Left);
+        window.MouseMove(new Point(XOf(Beat / 2 + Beat), Key60), RawInputModifiers.LeftMouseButton);
+        pointer!.Capture(null);   // Alt+Tab, or a dialog opening, mid-drag
+        window.MouseMove(new Point(XOf(Beat / 2 + 2 * Beat), Key60));   // no button held: nothing follows
+        Assert.Empty(edits);
+        // The next click puts a new note in after it, with the note where it always was.
+        window.MouseDown(new Point(XOf(3 * Beat) + 1, Key60), MouseButton.Left);
+        window.MouseUp(new Point(XOf(3 * Beat) + 1, Key60), MouseButton.Left);
+        Assert.Equal([0L, 3L * Beat], Assert.Single(edits).Select(n => n.Start));
     }
 }

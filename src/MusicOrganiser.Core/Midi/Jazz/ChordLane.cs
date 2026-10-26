@@ -138,17 +138,20 @@ public static class ChordLane
                     chords.Add(c);
                 }
             if (chords.Count == 0) continue;
-            var share = Bar / chords.Count;
-            foreach (var c in chords)
+            // Each chord's start worked out from the bar's, so a bar of 5 or 7 chords still ends on the bar line.
+            var barStart = at;
+            for (var k = 0; k < chords.Count; k++)
             {
-                if (c is { } chord)
+                at = barStart + (long)k * Bar / chords.Count;
+                var share = barStart + (long)(k + 1) * Bar / chords.Count - at;
+                if (chords[k] is { } chord)
                 {
                     if (lane.Count > 0 && lane[^1].End == at && lane[^1].Chord.Name == chord.Name)
                         lane[^1] = lane[^1] with { Length = lane[^1].Length + share };
                     else lane.Add(new TimedChord(at, share, chord));
                 }
-                at += share;
             }
+            at = barStart + Bar;
             previousBar = chords;
         }
         if (lane.Count == 0) why = "Type chords such as Dm9 G13 | Cmaj9 |";
