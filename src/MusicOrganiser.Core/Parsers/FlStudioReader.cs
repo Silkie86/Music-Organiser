@@ -16,7 +16,7 @@ namespace MusicOrganiser.Core.Parsers;
 public sealed partial class FlStudioReader : IProjectReader
 {
     public string Daw => "FL Studio";
-    public int Version => 6;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist; 4: samples that don't play; 5: FL 4 to 8 notes read as 20-byte records (2026-10-22); 6: FL 6 to 8 playlists, and saves FL stopped writing part-way
+    public int Version => 7;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist; 4: samples that don't play; 5: FL 4 to 8 notes read as 20-byte records (2026-10-22); 6: FL 6 to 8 playlists, and saves FL stopped writing part-way; 7: damaged event sizes read as the file ending there
     public IReadOnlyList<string> Extensions { get; } = [".flp"];
 
     const int Text = 192, Data = 208;
