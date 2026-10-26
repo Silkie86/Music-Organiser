@@ -26,6 +26,8 @@ public sealed partial class SongSpaceViewModel : ObservableObject
 
     bool _started;
 
+    public IRelayCommand OpenRecycleBinCommand => _main.OpenRecycleBinCommand;
+
     /// <summary>The tab showed: measure the song, once (Measure again does it again).</summary>
     public Task LoadAsync()
     {
@@ -54,6 +56,11 @@ public sealed partial class SongSpaceViewModel : ObservableObject
     [ObservableProperty] int _keepBackups;
     bool _keepRead;
 
+    /// <summary>How long without a save ends a sitting, for thinning older saves (Off doesn't offer it).</summary>
+    public static IReadOnlyList<SittingChoice> SittingChoices { get; } =
+        [new(0, "Off"), new(1, "1 hour"), new(SongSpace.DefaultSittingHours, "3 hours"), new(24, "a day")];
+    [ObservableProperty] SittingChoice? _sitting;
+
     int _measures;
 
     async Task MeasureAsync()
@@ -66,13 +73,16 @@ public sealed partial class SongSpaceViewModel : ObservableObject
         {
             _keepRead = true;
             KeepBackups = int.TryParse(_db.GetSetting(LibraryDb.KeepBackupsKey), out var k) && KeepBackupsChoices.Contains(k) ? k : SongSpace.DefaultKeepBackups;
+            var hours = int.TryParse(_db.GetSetting(LibraryDb.SittingHoursKey), out var h) ? h : SongSpace.DefaultSittingHours;
+            Sitting = SittingChoices.FirstOrDefault(c => c.Hours == hours) ?? SittingChoices[2];
         }
         var keep = KeepBackups;
+        var sitting = Sitting?.Hours ?? 0;
         var ids = _item.OlderSaves.Prepend(_item.Summary).Select(s => s.Id).ToList();
         SongSpaceReport report;
         try
         {
-            report = await Task.Run(() => SongSpace.Measure(saves, _db.Roots(), _db.SamplesOf(ids), keep));
+            report = await Task.Run(() => SongSpace.Measure(saves, _db.Roots(), _db.SamplesOf(ids), keep, sitting));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -84,6 +94,7 @@ public sealed partial class SongSpaceViewModel : ObservableObject
         Show(report);
         Measuring = false;
         OnPropertyChanged(nameof(KeepBackups));
+        OnPropertyChanged(nameof(Sitting));
     }
 
     SongSpaceReport? _report;
@@ -106,7 +117,14 @@ public sealed partial class SongSpaceViewModel : ObservableObject
             row.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(CompactRow.IsTicked)) Refresh(); };
             foreach (var file in row.Files) file.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(AudioFileRow.IsTicked)) Refresh(); };
         }
-        FreeableText = r.Freeable > 0 ? $"could save {DiskSpace.Text(r.Freeable)}" : "nothing to compact";
+        var thin = DiskSpace.Text(r.Thinnable);
+        FreeableText = (r.Freeable, r.Thinnable) switch
+        {
+            ( > 0, > 0) => $"could save {DiskSpace.Text(r.Freeable)}, and {thin} more by thinning older saves",
+            ( > 0, _) => $"could save {DiskSpace.Text(r.Freeable)}",
+            (_, > 0) => $"thinning older saves could save {thin}",
+            _ => "nothing to compact",
+        };
         Note = r.OwnFolder
             ? $"Everything in {Path.GetFileName(r.Folder)}, the song's own folder."
             : "Its save files and autosaves: the folder holds other songs too, so the rest isn't counted.";
@@ -130,6 +148,8 @@ public sealed partial class SongSpaceViewModel : ObservableObject
                                          "Byte-for-byte copies of another save in the same folder. The newest of each stays."),
                 CompactKind.Backup => (n == 1 ? "1 old autosave" : $"{n} old autosaves", "Your DAW's own backup copies, older than the newest you keep."),
                 CompactKind.Cache => ("Caches the DAW rebuilds", g.First().Note),
+                CompactKind.ThinnedSave => (n == 1 ? "Thin older saves: 1 save from the middle of a sitting" : $"Thin older saves: {n} saves from the middle of a sitting",
+                                            "Saves made close together while you worked. Your first save, your newest and the last save of each sitting stay. Not ticked for you."),
                 _ => (n == 1 ? "1 audio file no save seems to use" : $"{n} audio files no save seems to use",
                       "Maybe old bounces or takes, maybe a mix you'd want. Play each one and tick only what can go."),
             };
@@ -182,6 +202,13 @@ public sealed partial class SongSpaceViewModel : ObservableObject
         _player = null;
     }
 
+    partial void OnSittingChanged(SittingChoice? value)
+    {
+        if (Measuring || value is null) return;
+        _db.SetSetting(LibraryDb.SittingHoursKey, value.Hours.ToString());
+        _ = MeasureAsync();
+    }
+
     partial void OnKeepBackupsChanged(int value)
     {
         if (Measuring) return;
@@ -212,14 +239,15 @@ public sealed partial class SongSpaceViewModel : ObservableObject
         // Your newest save never goes, whatever the list says.
         var paths = Ticked().Select(t => t.Path).Where(p => !p.Equals(newest, StringComparison.OrdinalIgnoreCase)).Distinct().ToList();
         var bytes = TickedBytes;
-        var saves = Rows.Where(r => r.IsTicked && r.Kind == CompactKind.SameSave).SelectMany(r => r.Paths).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var saves = Rows.Where(r => r.IsTicked && r.Kind is CompactKind.SameSave or CompactKind.ThinnedSave).SelectMany(r => r.Paths).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var problems = await Task.Run(() => RecycleBin.SendMany(paths));
         foreach (var gone in saves.Where(s => !problems.ContainsKey(s)))
             _db.RemoveProject(gone);
         Busy = false;
         Confirming = false;
         if (problems.Count == 0)
-            _main.Activities.Start("Song compacted").Finish($"Freed {DiskSpace.Text(bytes)} from {_item.Name}", "The files are in the Recycle Bin if you want them back.");
+            _main.Activities.Start("Song compacted").Finish($"Freed {DiskSpace.Text(bytes)} from {_item.Name}", "The files are in the Recycle Bin if you want them back.",
+                                                            "Open Recycle Bin", _main.OpenRecycleBin);
         else
             _main.Activities.Failed($"Some of {_item.Name}'s files couldn't go", $"{problems.Count} left: {problems.First().Value}");
         if (saves.Count > 0) await _main.Projects.ReloadAsync(_item.Path);
@@ -233,6 +261,12 @@ public sealed record SpacePart(string Name, long Bytes, string Colour, double Sh
     public string SizeText => DiskSpace.Text(Bytes);
 }
 
+/// <summary>A choice of how long without a save ends a sitting.</summary>
+public sealed record SittingChoice(int Hours, string Label)
+{
+    public override string ToString() => Label;
+}
+
 /// <summary>A line on the Space tab: something that could go, ticked to go with Compact.</summary>
 public sealed partial class CompactRow : ObservableObject
 {
@@ -244,7 +278,8 @@ public sealed partial class CompactRow : ObservableObject
         Paths = paths;
         Bytes = bytes;
         Files = files ?? [];
-        _isTicked = CanTick;
+        // Thinning removes versions you might want to go back to: you tick it yourself.
+        _isTicked = CanTick && kind != CompactKind.ThinnedSave;
     }
 
     /// <summary>The audio files, each picked on its own (only on the audio line).</summary>

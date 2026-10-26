@@ -66,35 +66,38 @@ public sealed partial class PluginsViewModel
         _spaces = spaces;
         _rowSpace.Clear();
         var cutoff = DateTime.Now.AddYears(-years);
-        var families = used.Where(u => u.Format != "Native").Select(u => (Row: u, Family: PluginCatalog.Family(u.Name))).ToList();
+        // Each name's key and family worked out once: matching thousands of sizes against thousands of rows by
+        // working them out again each time froze the page for half a second after every Clean up (F12 note, 25 Oct).
+        var families = used.Select((u, at) => (Row: u, At: at, Key: LibraryDb.NameKey(u.Name), Family: PluginCatalog.Family(u.Name)))
+                           .Where(u => u.Row.Format != "Native").ToList();
+        var byKey = new Dictionary<string, (PluginUsage Row, int At, string Key, string Family)>();
+        foreach (var f in families) byKey.TryAdd(f.Key, f);
         var claimed = new HashSet<string>();
         var rows = used.ToList();
-        void Give(PluginUsage row, PluginSpaceInfo s)
+        void Give((PluginUsage Row, int At, string Key, string Family) f, PluginSpaceInfo s)
         {
-            var at = rows.FindIndex(r => ReferenceEquals(r, row));
-            rows[at] = row with { Bytes = s.Bytes, Unused = row.Installed && !(row.LastUsed >= cutoff) };
-            _rowSpace[rows[at]] = s;
-            claimed.Add(LibraryDb.NameKey(row.Name));
+            rows[f.At] = f.Row with { Bytes = s.Bytes, Unused = f.Row.Installed && !(f.Row.LastUsed >= cutoff) };
+            _rowSpace[rows[f.At]] = s;
+            claimed.Add(f.Key);
         }
         // Same names first ("Serum 2" is Serum2's), then close ones for what's left.
         var rest = new List<PluginSpaceInfo>();
         foreach (var s in spaces.Values)
         {
-            var exact = families.FirstOrDefault(f => LibraryDb.NameKey(f.Row.Name) == s.Key).Row;
-            if (exact is not null && !claimed.Contains(s.Key)) Give(exact, s);
+            if (byKey.TryGetValue(s.Key, out var exact) && !claimed.Contains(s.Key)) Give(exact, s);
             else rest.Add(s);
         }
         foreach (var s in rest)
         {
             var family = PluginCatalog.Family(s.Name);
-            var close = families.Where(f => Matched(f.Family, family)).Select(f => f.Row).ToList();
+            var close = families.Where(f => Matched(f.Family, family)).ToList();
             if (close.Count == 0)
             {
                 rows.Add(new PluginUsage(s.Name, s.Vendor, FormatOf(s), 0, "", true) { Bytes = s.Bytes, Unused = true });
                 _rowSpace[rows[^1]] = s;
             }
             // A row that already has its own size keeps it; this one counts as used either way, so it's never offered.
-            else if (close.FirstOrDefault(r => !claimed.Contains(LibraryDb.NameKey(r.Name))) is { } row) Give(row, s);
+            else if (close.FirstOrDefault(f => !claimed.Contains(f.Key)) is { Row: not null } row) Give(row, s);
         }
         return rows;
     }
@@ -127,6 +130,7 @@ public sealed partial class PluginsViewModel
         if (space is null || Selected is not { } plugin)
         {
             SpaceFolders = [];
+            LoadMoved("");
             SpaceSummary = Selected is { Installed: false } ? "Not installed, so it takes no room." : Selected is null ? "" : "Not measured yet.";
             SpaceParts = [];
             SharedText = "";
@@ -143,6 +147,7 @@ public sealed partial class PluginsViewModel
             new SpacePart("Sounds", space.Sounds, "#E0A640", space.Sounds / total),
         }.Where(p => p.Bytes > 0).ToList();
         SpaceFolders = space.Folders.OrderByDescending(f => f.Bytes).Select(f => new SpaceFolderItem(f, this, NamesOf(f.SharedWith))).ToList();
+        LoadMoved(space.Key);
     }
 
     string NamesOf(IEnumerable<string> keys) =>
@@ -236,7 +241,7 @@ public sealed partial class PluginsViewModel
         var problems = await Task.Run(() => RecycleBin.SendMany(picked.Select(i => i.Folder.Path).ToList()));
         var freed = picked.Where(i => !problems.ContainsKey(i.Folder.Path)).Sum(i => i.Folder.Bytes);
         Card = null;
-        if (freed > 0) _main.Activities.Start("Cleaned up").Finish($"Freed {DiskSpace.Text(freed)}", "They're in the Recycle Bin if you want them back.");
+        if (freed > 0) _main.Activities.Start("Cleaned up").Finish($"Freed {DiskSpace.Text(freed)}", "They're in the Recycle Bin if you want them back.", "Open Recycle Bin", _main.OpenRecycleBin);
         // One card for what stayed, not one each (a spare-copies clean up can hold hundreds).
         if (problems.Count > 0)
             _main.Activities.Failed(problems.Count == 1 ? $"Couldn't remove {Path.GetFileName(problems.First().Key)}" : $"{problems.Count} couldn't be removed",
@@ -423,6 +428,9 @@ public sealed partial class SpaceFolderItem(SpaceFolder folder, PluginsViewModel
 
     [RelayCommand] void Show() => Shell.Reveal(folder.Path);
     [RelayCommand] Task NotThis() => owner.NotThisPlugins(folder);
+    /// <summary>Sounds and presets can live on another drive; plugin files stay where the DAWs look for them.</summary>
+    public bool CanMove => folder.Kind != SpaceKind.Program;
+    [RelayCommand] Task Move() => owner.MoveFolderAsync(folder);
 }
 
 /// <summary>A folder on a Clean up card: ticked to go, or why it has to stay.</summary>
@@ -499,9 +507,22 @@ public sealed partial class SpaceCard(PluginsViewModel owner) : ObservableObject
             CanConfirm = PickedUninstaller is not null;
             return;
         }
+        if (_fixedText)
+        {
+            CanConfirm = true;   // Move, Move back: the ticks are extras
+            return;
+        }
         var bytes = Items.Where(i => i.IsTicked).Sum(i => i.Folder.Bytes);
-        if (!_fixedText) ConfirmText = bytes > 0 ? $"Delete {DiskSpace.Text(bytes)}" : "Delete";
+        ConfirmText = bytes > 0 ? $"Delete {DiskSpace.Text(bytes)}" : "Delete";
         CanConfirm = bytes > 0;
+    }
+
+    /// <summary>A card whose button always reads the same ("Move 4.5 GB"), ready to press.</summary>
+    internal void Fix(string confirmText)
+    {
+        _fixedText = true;
+        ConfirmText = confirmText;
+        CanConfirm = true;
     }
 
     [RelayCommand] void Keep() => owner.CloseCard();

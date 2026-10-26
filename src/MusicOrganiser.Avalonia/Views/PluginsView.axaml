@@ -40,8 +40,10 @@
             </StackPanel>
         </DockPanel>
 
+        <!-- The list, and the picked plugin's panel: the divider between them drags (Solomon's F12 note, 25 Oct). -->
+        <Grid x:Name="Body" ColumnDefinitions="*,12,380">
         <!-- The picked plugin: the projects using it, and its installed copies as the plugin scanner read them. -->
-        <Border DockPanel.Dock="Right" Width="380" Margin="12,0,0,0" Classes="card">
+        <Border Grid.Column="2" Classes="card">
             <Panel>
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24"
                             IsVisible="{Binding Selected, Converter={x:Static ObjectConverters.IsNull}}">
@@ -143,6 +145,36 @@
                                             <Button Content="Add a folder…" Margin="0,0,6,6" Command="{Binding AddSpaceFolderCommand}"
                                                     ToolTip.Tip="A folder of its sounds or presets the app didn't find, like a sound library on another drive" />
                                         </WrapPanel>
+                                        <!-- Folders moved to another drive: their old copy, and Move back. -->
+                                        <StackPanel Spacing="4" IsVisible="{Binding HasMoved}">
+                                            <TextBlock Text="ON ANOTHER DRIVE" Classes="filterLabel" Margin="0,4,0,0" />
+                                            <ItemsControl ItemsSource="{Binding MovedFolders}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="vm:MovedFolderItem">
+                                                        <Border Classes="row" Padding="8,5" Margin="-8,0">
+                                                            <StackPanel Spacing="3">
+                                                                <DockPanel>
+                                                                    <TextBlock DockPanel.Dock="Right" Text="{Binding SizeText}" FontFamily="{DynamicResource NumberFont}" FontSize="12"
+                                                                               Margin="8,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" />
+                                                                    <TextBlock Text="{Binding Title}" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                                                </DockPanel>
+                                                                <TextBlock Text="{Binding Where}" FontSize="11" Foreground="{StaticResource FaintBrush}"
+                                                                           TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Where}" />
+                                                                <TextBlock Text="{Binding OldCopyText}" FontSize="11" Foreground="{StaticResource WarningBrush}" TextWrapping="Wrap"
+                                                                           IsVisible="{Binding HasOldCopy}" />
+                                                                <WrapPanel>
+                                                                    <Button Content="Delete old copy…" Margin="0,0,6,0" Command="{Binding DeleteOldCopyCommand}" IsVisible="{Binding HasOldCopy}"
+                                                                            ToolTip.Tip="Once the plugin opens fine: the copy left here goes to the Recycle Bin" />
+                                                                    <Button Content="Move back…" Margin="0,0,6,0" Command="{Binding MoveBackCommand}"
+                                                                            ToolTip.Tip="Bring the folder back to where it was" />
+                                                                    <Button Content="Show" Command="{Binding ShowCommand}" />
+                                                                </WrapPanel>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
                                         <TextBlock Text="FILES AND FOLDERS" Classes="filterLabel" Margin="0,4,0,0" />
                                         <ItemsControl ItemsSource="{Binding SpaceFolders}">
                                             <ItemsControl.ItemTemplate>
@@ -151,6 +183,8 @@
                                                         <DockPanel>
                                                             <StackPanel DockPanel.Dock="Right" Classes="rowActions">
                                                                 <Button Content="Show" Command="{Binding ShowCommand}" />
+                                                                <Button Content="Move…" Command="{Binding MoveCommand}" IsVisible="{Binding CanMove}"
+                                                                        ToolTip.Tip="Move it to another drive. The plugin and your projects still find it where it was." />
                                                                 <Button Content="Not its" Command="{Binding NotThisCommand}" IsVisible="{Binding CanRuleOut}"
                                                                         ToolTip.Tip="This folder isn't this plugin's: leave it out from now on" />
                                                             </StackPanel>
@@ -238,7 +272,10 @@
             </Panel>
         </Border>
 
-        <Grid RowDefinitions="Auto,Auto,*,Auto">
+        <GridSplitter Grid.Column="1" Width="12" Background="Transparent" ResizeDirection="Columns"
+                      DragCompleted="OnSplitterMoved" ToolTip.Tip="Drag to give the list or the plugin more room" />
+
+        <Grid Grid.Column="0" RowDefinitions="Auto,Auto,*,Auto">
             <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto">
             <StackPanel>
             <!-- Big plugins no project has used for years: what Clean up and Uninstall could free. -->
@@ -424,6 +461,8 @@
                 <DockPanel Margin="0,6,0,0">
                     <Button DockPanel.Dock="Left" Content="Measure sizes again" Command="{Binding MeasureAgainCommand}"
                             ToolTip.Tip="Measure every plugin's files, presets and sounds now. It runs in the background." />
+                    <Button DockPanel.Dock="Left" Margin="6,0,0,0" Content="Recycle Bin" Command="{Binding OpenRecycleBinCommand}"
+                            ToolTip.Tip="Open the Recycle Bin, where everything Clean up and Uninstall remove goes (Ctrl+Shift+Delete)" />
                     <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" FontSize="12" Classes="muted" TextWrapping="Wrap" Text="{Binding SpaceNote}" />
                 </DockPanel>
                 <DockPanel Margin="0,8,0,0" IsVisible="{Binding CanReadAll}">
@@ -432,6 +471,7 @@
                                Text="Loads each plugin whose parameters haven't been read, four at a time. Some show a licence window as they load. Stop in the sidebar pauses it, and it carries on from there next time." />
                 </DockPanel>
             </StackPanel>
+        </Grid>
         </Grid>
     </DockPanel>
 

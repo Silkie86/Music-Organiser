@@ -20,6 +20,8 @@ public sealed partial class LibraryDb
     public const string UnusedYearsKey = "space_unused_years";
     /// <summary>Setting: how many of a song's newest autosaves Compact keeps.</summary>
     public const string KeepBackupsKey = "space_keep_backups";
+    /// <summary>Setting: how long without a save ends a sitting, for thinning older saves (0: don't thin).</summary>
+    public const string SittingHoursKey = "space_sitting_hours";
     /// <summary>Settings per plugin: folders you added to it, and guessed folders you said aren't its.</summary>
     public static string AddedFoldersKey(string key) => $"plugin_space_added:{key}";
     public static string RuledOutKey(string key) => $"plugin_space_not:{key}";
@@ -43,6 +45,14 @@ public sealed partial class LibraryDb
         GetSetting(SpareCopiesKey) is { Length: > 0 } json ? JsonSerializer.Deserialize<List<SpareCopy>>(json) ?? [] : [];
 
     public void SaveSpareCopies(IEnumerable<SpareCopy> copies) => SetSetting(SpareCopiesKey, JsonSerializer.Serialize(copies.ToList()));
+
+    /// <summary>Setting: plugin folders moved to another drive (see <see cref="FolderMove"/>).</summary>
+    public const string MovedFoldersKey = "space_moved_folders";
+
+    public IReadOnlyList<MovedFolder> MovedFolders() =>
+        GetSetting(MovedFoldersKey) is { Length: > 0 } json ? JsonSerializer.Deserialize<List<MovedFolder>>(json) ?? [] : [];
+
+    public void SaveMovedFolders(IEnumerable<MovedFolder> moved) => SetSetting(MovedFoldersKey, JsonSerializer.Serialize(moved.ToList()));
 
     long _spaceRevision;
     /// <summary>Goes up when sizes are measured again, so the pages show the new ones.</summary>

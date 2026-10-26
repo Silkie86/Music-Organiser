@@ -339,6 +339,17 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     Task Rescan() => ScanAsync(false);
 
+    /// <summary>Opens the Recycle Bin, where Clean up, Compact and Uninstall put what they remove (Solomon's F12 note, 25 Oct).</summary>
+    [RelayCommand]
+    internal void OpenRecycleBin()
+    {
+        try { Shell.OpenRecycleBin(); }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            Activities.Failed("Couldn't open the Recycle Bin", e.Message);
+        }
+    }
+
     [RelayCommand]
     Task FullRescan() => ScanAsync(true);
 

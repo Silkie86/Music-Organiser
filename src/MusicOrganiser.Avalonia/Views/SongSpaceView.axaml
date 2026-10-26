@@ -12,6 +12,8 @@
                 <DockPanel>
                     <Button DockPanel.Dock="Right" Content="Measure again" Command="{Binding RemeasureCommand}" VerticalAlignment="Top"
                             ToolTip.Tip="Measure the song's files again (after saving it, say)" />
+                    <Button DockPanel.Dock="Right" Margin="0,0,6,0" Content="Recycle Bin" Command="{Binding OpenRecycleBinCommand}" VerticalAlignment="Top"
+                            ToolTip.Tip="Open the Recycle Bin, where everything Compact removes goes (Ctrl+Shift+Delete)" />
                     <StackPanel Orientation="Horizontal" Spacing="10">
                         <TextBlock Text="{Binding TotalText}" FontSize="22" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}" />
                         <TextBlock Text="{Binding FreeableText}" Foreground="{StaticResource OkBrush}" VerticalAlignment="Bottom" Margin="0,0,0,4" />
@@ -39,6 +41,10 @@
                         <ComboBox ItemsSource="{x:Static vm:SongSpaceViewModel.KeepBackupsChoices}" SelectedItem="{Binding KeepBackups}"
                                   ToolTip.Tip="How many of the newest autosaves stay when you compact" />
                         <TextBlock Text="autosaves" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+                        <TextBlock Text="· a sitting ends after" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="6,0,0,0" />
+                        <ComboBox ItemsSource="{x:Static vm:SongSpaceViewModel.SittingChoices}" SelectedItem="{Binding Sitting}"
+                                  ToolTip.Tip="Thin older saves: saves closer together than this are one sitting, and only its last save stays. Off doesn't offer it." />
+                        <TextBlock Text="without a save" Classes="muted" FontSize="12" VerticalAlignment="Center" />
                     </StackPanel>
                     <TextBlock Text="COMPACT WITHOUT LOSING MUSIC" Classes="filterLabel" VerticalAlignment="Center" />
                 </DockPanel>

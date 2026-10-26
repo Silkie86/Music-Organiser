@@ -141,6 +141,7 @@ public sealed class AppShortcuts
             case "app.nextItem": return view is not null && StepList(view, 1);
             case "app.prevTab": return view is not null && StepTab(view, -1);
             case "app.nextTab": return view is not null && StepTab(view, 1);
+            case "app.recycleBin": main.OpenRecycleBinCommand.Execute(null); return true;
             case "app.rescan":
                 if (!main.IsScanning) main.RescanCommand.Execute(null);
                 return true;

@@ -28,6 +28,19 @@ public sealed partial class PluginsViewModel : ObservableObject
     /// <summary>0 hides the cards (their ✕ does that too).</summary>
     public static IReadOnlyList<int> NeededCountChoices { get; } = [0, 3, 6, 9, 12];
 
+    public IRelayCommand OpenRecycleBinCommand => _main.OpenRecycleBinCommand;
+
+    /// <summary>Setting: how wide the picked plugin's panel is, where you left its divider.</summary>
+    public const string PanelWidthKey = "plugins_panel_width";
+
+    /// <summary>The picked plugin's panel width: 380 at first, then where you drag the divider (Solomon's F12 note, 25 Oct).</summary>
+    public double PanelWidth
+    {
+        get => double.TryParse(_db.GetSetting(PanelWidthKey), System.Globalization.NumberStyles.Float,
+                   System.Globalization.CultureInfo.InvariantCulture, out var w) ? Math.Clamp(w, 300, 2000) : 380;
+        set => _db.SetSetting(PanelWidthKey, Math.Clamp(value, 300, 2000).ToString("0", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
     [ObservableProperty] IReadOnlyList<PluginUsage> _items = [];
     [ObservableProperty] IItemsView? _view;
     [ObservableProperty] string _searchText = "";

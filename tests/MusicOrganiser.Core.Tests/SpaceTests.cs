@@ -233,6 +233,65 @@ public class SpaceTests : IDisposable
     }
 
     [Fact]
+    public void Thinning_keeps_the_first_save_the_newest_and_the_last_of_each_sitting()
+    {
+        var day = new DateTime(2026, 3, 1, 20, 0, 0);
+        // Each a different length, so none is an identical copy of another.
+        SongSpace.Save S(string name, DateTime when) => new(File($"Thin/{name}.flp", 40 + name[^1], when), 40 + name[^1], when);
+        var saves = new[]
+        {
+            S("song_1", day), S("song_2", day.AddMinutes(20)), S("song_3", day.AddMinutes(50)),            // one evening
+            S("song_4", day.AddDays(2)), S("song_5", day.AddDays(2).AddHours(1)),                            // two days on
+            S("song_6", day.AddDays(30)), S("song_7", day.AddDays(30).AddMinutes(5)),                        // a month on: the newest
+        };
+        // song_1 is the first; song_3, song_5 end their sittings; song_7 is the newest. song_6 is a minute before it.
+        Assert.Equal(["song_2", "song_4", "song_6"], SongSpace.Thin(saves, 3).Select(s => Path.GetFileNameWithoutExtension(s.Path)));
+        Assert.Empty(SongSpace.Thin(saves, 0));
+        Assert.Equal(["song_2"], SongSpace.Thin(saves, 1).Take(1).Select(s => Path.GetFileNameWithoutExtension(s.Path)));
+
+        var r = SongSpace.Measure(saves, [Path.Combine(_root, "Thin")], new HashSet<string>(), sittingHours: 3);
+        Assert.Equal(3, r.Items.Count(i => i.Kind == CompactKind.ThinnedSave));
+        Assert.Equal(3 * 40 + '2' + '4' + '6', r.Thinnable);
+        Assert.Equal(0, r.Freeable);   // thinning is only ever picked by hand
+    }
+
+    [Fact]
+    public void A_folder_moves_to_another_drive_behind_a_link_and_moves_back()
+    {
+        var from = Path.GetDirectoryName(File("C/Docs/Hive/Sounds/pad.h2p", 300))!;
+        File("C/Docs/Hive/Sounds/deep/bass.h2p", 200);
+        var drive = Path.Combine(_root, "D", "Plugin Data");
+        Directory.CreateDirectory(drive);
+        Directory.CreateDirectory(Path.Combine(_root, "E"));
+        // The folders C, D and E stand in for drives.
+        string DriveOf(string path) => Path.GetRelativePath(_root, path).Split(Path.DirectorySeparatorChar)[0];
+
+        Assert.Contains("inside", FolderMove.Problem(from, Path.Combine(from, "deep"), 500, driveOf: DriveOf));
+        Assert.Contains("same drive", FolderMove.Problem(from, Path.Combine(_root, "C", "Elsewhere"), 500, driveOf: DriveOf));
+        Assert.Contains("free", FolderMove.Problem(from, drive, 500, _ => 1000, DriveOf));
+
+        var moved = FolderMove.Move(from, drive, 500, driveOf: DriveOf);
+        Assert.True(FolderMove.IsLink(from));
+        Assert.True(moved.HasOldCopy);
+        Assert.Equal(Path.Combine(drive, "Sounds"), moved.To);
+        // The plugin still finds its files where they were.
+        Assert.Equal(200, new FileInfo(Path.Combine(from, "deep", "bass.h2p")).Length);
+        Assert.Contains("moved already", FolderMove.Problem(from, drive, 500, driveOf: DriveOf));
+
+        FolderMove.MoveBack(moved);
+        Assert.False(FolderMove.IsLink(from));
+        Assert.False(moved.HasOldCopy);
+        Assert.Equal(300, new FileInfo(Path.Combine(from, "pad.h2p")).Length);
+
+        // With its old copy deleted, moving back copies the folder home first.
+        moved = FolderMove.Move(from, Path.Combine(_root, "E"), 500, driveOf: DriveOf);
+        Directory.Delete(moved.OldCopy, true);
+        FolderMove.MoveBack(moved);
+        Assert.False(FolderMove.IsLink(from));
+        Assert.Equal(200, new FileInfo(Path.Combine(from, "deep", "bass.h2p")).Length);
+    }
+
+    [Fact]
     public void A_song_sharing_its_folder_counts_its_saves_and_fl_studios_autosaves()
     {
         var a = File("Projects/garage.flp", 100, new DateTime(2025, 5, 1));
@@ -330,6 +389,13 @@ public class SpaceTests : IDisposable
         Assert.False(plugins.HasNeeded);
         Assert.False(plugins.AllInstalled);
 
+        // The side panel's divider: remembered, never so narrow the panel can't be read.
+        Assert.Equal(380, plugins.PanelWidth);
+        plugins.PanelWidth = 120;
+        Assert.Equal(300, plugins.PanelWidth);
+        plugins.PanelWidth = 640;
+        Assert.Equal(640, plugins.PanelWidth);
+
         // Five years instead of two: UVI's last song (4 years ago) is recent enough.
         plugins.UnusedYears = 5;
         Assert.False(plugins.Items.Single(p => p.Name == "UVI Workstation").Unused);
@@ -398,6 +464,8 @@ public class SpaceTests : IDisposable
         Assert.Equal("Delete 300 bytes", space.ConfirmText);
         Assert.Contains("1 audio file you picked goes too", space.ConfirmNote);
         Assert.True(space.CompactCommand.CanExecute(null));
+        Assert.Equal(SongSpace.DefaultSittingHours, space.Sitting!.Hours);   // thinning is offered, never ticked
+        Assert.DoesNotContain(space.Rows, r => r.Kind == CompactKind.ThinnedSave && r.IsTicked);
     }
 
     [Fact]

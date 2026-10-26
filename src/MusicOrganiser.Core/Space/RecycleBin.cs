@@ -82,24 +82,14 @@ public static class RecycleBin
         try
         {
             File.WriteAllLines(list, paths);
-            if (Environment.ProcessPath is not { } exe) return paths.Select(p => (p, NeedsAdmin));
-            var args = $"{HelperFlag} \"{list}\" \"{result}\"";
-            // Run with `dotnet app.dll`, the app is the dll after dotnet.
-            if (Path.GetFileNameWithoutExtension(exe).Equals("dotnet", StringComparison.OrdinalIgnoreCase) &&
-                System.Reflection.Assembly.GetEntryAssembly()?.Location is { Length: > 0 } dll)
-                args = $"\"{dll}\" {args}";
-            using (var helper = Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden }))
-                helper?.WaitForExit();
+            var problem = AdminStep.Run(HelperFlag, list, result);
+            if (problem.Length > 0) return paths.Select(p => (p, problem));
             if (!File.Exists(result)) return paths.Select(p => (p, "The administrator step didn't finish."));
             var said = File.ReadAllLines(result).Select(l => l.Split('\t', 2)).Where(x => x.Length == 2)
                            .ToDictionary(x => x[0], x => x[1], StringComparer.OrdinalIgnoreCase);
             return paths.Select(p => (p, said.TryGetValue(p, out var problem) ? problem : "The administrator step skipped it.")).ToList();
         }
-        catch (System.ComponentModel.Win32Exception e) when (e.NativeErrorCode == 1223)
-        {
-            return paths.Select(p => (p, "You said no to Windows' administrator question, so it stayed."));
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return paths.Select(p => (p, e.Message));
         }

@@ -15,6 +15,11 @@ public enum CompactKind
     Cache,
     /// <summary>Audio in the song's folder that no save seems to use: never ticked for you; you listen and pick each one.</summary>
     UnusedAudio,
+    /// <summary>
+    /// A save from the middle of a sitting: one of a burst of saves made close together. Only picked by hand: the first
+    /// save, your newest and the last save of each sitting always stay.
+    /// </summary>
+    ThinnedSave,
 }
 
 /// <summary>Something in a song's folder that could go. <paramref name="Paths"/>: one file, or several shown as one line.</summary>
@@ -28,7 +33,9 @@ public sealed record CompactItem(CompactKind Kind, IReadOnlyList<string> Paths, 
 public sealed record SongSpaceReport(long Bytes, bool OwnFolder, string Folder, long Saves, long Backups, long Caches, long Audio, long Other,
                                      IReadOnlyList<CompactItem> Items)
 {
-    public long Freeable => Items.Where(i => i.CanRemove).Sum(i => i.Bytes);
+    public long Freeable => Items.Where(i => i.CanRemove && i.Kind != CompactKind.ThinnedSave).Sum(i => i.Bytes);
+    /// <summary>What thinning older saves could free on top, if you pick it.</summary>
+    public long Thinnable => Items.Where(i => i.Kind == CompactKind.ThinnedSave).Sum(i => i.Bytes);
 }
 
 /// <summary>
@@ -43,6 +50,12 @@ public static class SongSpace
 
     public const int DefaultKeepBackups = 5;
 
+    /// <summary>
+    /// How long without a save ends a sitting. Measured on Solomon's FL Studio saves (26 Oct 2026): half the gaps between
+    /// a song's saves are under 3 hours, then hardly any fall between 3 and 6 hours, so 3 hours parts one sitting from the next.
+    /// </summary>
+    public const int DefaultSittingHours = 3;
+
     /// <param name="saves">The song's saves.</param>
     /// <param name="roots">Your project folders: a song never has one of these to itself.</param>
     /// <param name="usedAudio">
@@ -50,8 +63,9 @@ public static class SongSpace
     /// saved them, so a file counts as used when any save names a file of that name.
     /// </param>
     /// <param name="keepBackups">How many of the newest autosaves stay.</param>
+    /// <param name="sittingHours">How long without a save ends a sitting, for thinning older saves; 0 doesn't thin.</param>
     public static SongSpaceReport Measure(IReadOnlyList<Save> saves, IReadOnlyList<string> roots, IReadOnlySet<string> usedAudio,
-                                          int keepBackups = DefaultKeepBackups, CancellationToken ct = default) => Parallelism.Background(() =>
+                                          int keepBackups = DefaultKeepBackups, int sittingHours = 0, CancellationToken ct = default) => Parallelism.Background(() =>
     {
         if (saves.Count == 0) return new SongSpaceReport(0, false, "", 0, 0, 0, 0, 0, []);
         // Written the way the folder listing writes them ("C:\a/b" and "C:\a\b" are the same file).
@@ -110,6 +124,10 @@ public static class SongSpace
 
         var items = new List<CompactItem>();
         items.AddRange(SameSaves(saves, newest, ct));
+        var copies = items.SelectMany(i => i.Paths).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        items.AddRange(Thin(saves, sittingHours).Where(s => !copies.Contains(s.Path))
+                           .Select(s => new CompactItem(CompactKind.ThinnedSave, [s.Path], File.Exists(s.Path) ? new FileInfo(s.Path).Length : s.Size,
+                                                        $"Saved {s.Modified:d MMM yyyy HH:mm}")));
         // The newest few autosaves stay: they're what you'd reach for after a crash.
         foreach (var b in backups.OrderByDescending(b => b.Modified).Skip(Math.Max(0, keepBackups)))
             items.Add(new(CompactKind.Backup, [b.Path], b.Size, $"Autosave from {b.Modified:d MMM yyyy}"));
@@ -121,6 +139,22 @@ public static class SongSpace
         var total = savesBytes + backupBytes + cacheBytes + audioBytes + other;
         return new SongSpaceReport(total, own, folder, savesBytes, backupBytes, cacheBytes, audioBytes, other, items);
     });
+
+    /// <summary>
+    /// The saves thinning would remove (Solomon's F12 note, 26 Oct: "thin the older saves so the first one and the most
+    /// important ones are kept, the ones after a flurry of saves"). Saves less than <paramref name="sittingHours"/> apart
+    /// make one sitting; the last save of each sitting stays, as do the very first save and the newest.
+    /// </summary>
+    public static IReadOnlyList<Save> Thin(IReadOnlyList<Save> saves, int sittingHours)
+    {
+        if (sittingHours <= 0 || saves.Count < 3) return [];
+        var ordered = saves.OrderBy(s => s.Modified).ToList();
+        var gap = TimeSpan.FromHours(sittingHours);
+        var thin = new List<Save>();
+        for (var i = 1; i < ordered.Count - 1; i++)
+            if (ordered[i + 1].Modified - ordered[i].Modified < gap) thin.Add(ordered[i]);
+        return thin;
+    }
 
     /// <summary>
     /// Whether the folder is the song's own: none of your project folders, and every project file directly in it is one

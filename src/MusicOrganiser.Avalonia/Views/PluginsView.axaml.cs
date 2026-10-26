@@ -15,7 +15,25 @@ public partial class PluginsView : UserControl, IShortcutPage
             if (_vm is not null) _vm.PropertyChanged -= OnVmChanged;
             _vm = DataContext as PluginsViewModel;
             if (_vm is not null) _vm.PropertyChanged += OnVmChanged;
+            if (_vm is not null) ShowPanelWidth(_vm.PanelWidth);
         };
+    }
+
+    // The divider between the list and the picked plugin's panel: the panel keeps its width as the window changes size.
+    ColumnDefinition PanelColumn => Body.ColumnDefinitions[2];
+
+    void ShowPanelWidth(double width)
+    {
+        PanelColumn.Width = new GridLength(width);
+        PanelColumn.MinWidth = 300;
+        Body.ColumnDefinitions[0].MinWidth = 420;
+    }
+
+    void OnSplitterMoved(object? sender, VectorEventArgs e)
+    {
+        if (_vm is null) return;
+        _vm.PanelWidth = PanelColumn.ActualWidth;
+        ShowPanelWidth(_vm.PanelWidth);
     }
 
     PluginsViewModel? _vm;
