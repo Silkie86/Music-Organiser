@@ -27,6 +27,68 @@ public static class DiskSpace
         size >= BigFile || TextScan.IsAudioPath(path) || SoundExtensions.Contains(Path.GetExtension(path));
 
     /// <summary>
+    /// Whether a file or folder is a link to another place (a junction or symbolic link), even one whose place has gone.
+    /// OneDrive marks its files and folders with the same "reparse point" flag without them being links, so on Windows
+    /// the flag alone doesn't say: the link's target does.
+    /// </summary>
+    public static bool IsLink(FileSystemInfo info)
+    {
+        try { return info.LinkTarget is not null; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    // A folder met on a walk that is a link to another place: not looked into, so nothing is counted twice.
+    static bool IsLinkedFolder(ref FileSystemEntry e) =>
+        (e.Attributes & FileAttributes.ReparsePoint) != 0 && (!OperatingSystem.IsWindows() || IsLink(new DirectoryInfo(e.ToFullPath())));
+
+    // Windows' "offline" and "recall on data access": a OneDrive file that's only online, so it takes no room here.
+    const FileAttributes OnlineOnly = FileAttributes.Offline | (FileAttributes)0x00400000;
+
+    // A file met on a walk that takes room here. On Windows a link to a file has no size of its own, and OneDrive's files
+    // carry the link flag too, so only the ones that are only online are left out; elsewhere the flag means a link.
+    static bool TakesRoom(ref FileSystemEntry e) =>
+        OperatingSystem.IsWindows() ? !IsOnlineOnly(e.Attributes) : (e.Attributes & FileAttributes.ReparsePoint) == 0;
+
+    /// <summary>Whether a file is a OneDrive file that's only online: it takes no room here, and reading it downloads it.</summary>
+    public static bool IsOnlineOnly(FileAttributes attributes) => (attributes & OnlineOnly) != 0;
+
+    /// <summary>
+    /// Whether any file in a folder or its folders is a OneDrive file that's only online, which the size walks leave out
+    /// and copying would download first. Links to other places aren't followed. Only Windows has them.
+    /// </summary>
+    public static bool HasOnlineOnly(string folder, CancellationToken ct = default)
+    {
+        if (!OperatingSystem.IsWindows() || !Directory.Exists(folder)) return false;
+        var seen = 0;
+        try
+        {
+            var online = new FileSystemEnumerable<bool>(folder, (ref FileSystemEntry _) => true,
+                new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 })
+            {
+                ShouldIncludePredicate = (ref FileSystemEntry e) =>
+                {
+                    if ((++seen & 1023) == 0) ct.ThrowIfCancellationRequested();
+                    return !e.IsDirectory && IsOnlineOnly(e.Attributes);
+                },
+                ShouldRecursePredicate = (ref FileSystemEntry e) => !IsLinkedFolder(ref e),
+            };
+            return online.Any();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    /// <summary>
+    /// Every file in a folder and its folders, as the size walks see them: links to other places (junctions) aren't
+    /// followed, OneDrive files that are only online are left out, and folders it can't read are skipped.
+    /// </summary>
+    public static FileSystemEnumerable<T> Files<T>(string folder, FileSystemEnumerable<T>.FindTransform transform) =>
+        new(folder, transform, new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 })
+        {
+            ShouldIncludePredicate = (ref FileSystemEntry e) => !e.IsDirectory && TakesRoom(ref e),
+            ShouldRecursePredicate = (ref FileSystemEntry e) => !IsLinkedFolder(ref e),
+        };
+
+    /// <summary>
     /// Adds up a file, or everything in a folder and its folders. Links to other folders (junctions) aren't followed,
     /// so nothing is counted twice, and folders it can't read are left out. Runs in one of the background slots.
     /// </summary>
@@ -44,16 +106,9 @@ public static class DiskSpace
         if (!Directory.Exists(path)) return default;
         long bytes = 0, sound = 0;
         var files = 0;
-        var options = new EnumerationOptions
-        {
-            RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint,
-        };
         try
         {
-            var entries = new FileSystemEnumerable<(string Path, long Size)>(path,
-                (ref FileSystemEntry e) => (e.ToFullPath(), e.Length), options)
-            { ShouldIncludePredicate = (ref FileSystemEntry e) => !e.IsDirectory };
-            foreach (var (file, size) in entries)
+            foreach (var (file, size) in Files(path, (ref FileSystemEntry e) => (e.ToFullPath(), e.Length)))
             {
                 if ((++files & 1023) == 0) ct.ThrowIfCancellationRequested();
                 bytes += size;

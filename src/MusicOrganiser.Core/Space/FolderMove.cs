@@ -39,17 +39,11 @@ public static class FolderMove
     public static string Target(string from, string destination) =>
         Path.Combine(destination, Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(from))));
 
-    /// <summary>Whether the folder is a link to another place (moved already, or set up that way).</summary>
-    public static bool IsLink(string path)
-    {
-        try
-        {
-            // A link whose folder has gone still counts: it's the link that's there.
-            var info = new DirectoryInfo(path);
-            return info.LinkTarget is not null || info.Exists && info.Attributes.HasFlag(FileAttributes.ReparsePoint);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
-    }
+    /// <summary>
+    /// Whether the folder is a link to another place (moved already, or set up that way). A link whose folder has gone
+    /// still counts: it's the link that's there. A OneDrive folder isn't one, though Windows marks it the same way.
+    /// </summary>
+    public static bool IsLink(string path) => DiskSpace.IsLink(new DirectoryInfo(path));
 
     /// <summary>Why the folder can't move to <paramref name="destination"/>, or "" when it can.</summary>
     /// <param name="driveOf">Which drive a path is on (tests stand in a second drive with a folder).</param>
@@ -71,11 +65,16 @@ public static class FolderMove
             var drive = new DriveInfo(Path.GetPathRoot(destination)!);
             if (drive.DriveType is DriveType.Network) return "Windows can't point a folder at a network drive. Pick a drive in this PC.";
         }
+        // Copying a OneDrive file that's only online downloads it first, onto the drive being freed, and the size left it out.
+        if (DiskSpace.HasOnlineOnly(from)) return OnlineOnly;
         var free = (freeSpace ?? FreeSpace)(destination);
         if (free >= 0 && free < bytes + Headroom)
             return $"That drive has {DiskSpace.Text(free)} free; this needs {DiskSpace.Text(bytes)} and some room to spare.";
         return "";
     }
+
+    const string OnlineOnly = "Some of its files are only online in OneDrive, so copying them would download them onto this drive first. " +
+                              "In File Explorer, right-click the folder and pick Always keep on this device. Once they've downloaded, try again.";
 
     /// <summary>The drive (on a Mac or Linux, the mounted disk) a path is on.</summary>
     public static string DriveOf(string path)
@@ -195,6 +194,8 @@ public static class FolderMove
                     continue;
                 }
                 var source = (FileInfo)entry;
+                // Never downloaded to be copied (one that went online-only after the check): it stops before anything is swapped.
+                if (DiskSpace.IsOnlineOnly(source.Attributes)) throw new IOException(OnlineOnly);
                 if (onlyNewer && new FileInfo(copy) is { Exists: true } there && there.LastWriteTimeUtc >= source.LastWriteTimeUtc) continue;
                 File.Copy(source.FullName, copy, overwrite: onlyNewer);
                 File.SetLastWriteTimeUtc(copy, source.LastWriteTimeUtc);
@@ -322,14 +323,35 @@ public static class FolderMove
 
     static string UnswapHere(string from, string restore)
     {
+        string? was = null;
         try
         {
-            if (IsLink(from)) Directory.Delete(from);   // the link only, never what it points to
-            Directory.Move(restore, from);
-            return "";
+            if (IsLink(from))
+            {
+                was = new DirectoryInfo(from).LinkTarget;
+                Directory.Delete(from);   // the link only, never what it points to
+            }
         }
         catch (Exception e) when (Denied(e)) { return NeedsAdmin; }
         catch (IOException e) { return $"Windows wouldn't move the folder back ({e.Message}). Close your DAW and the plugin, then try again."; }
+        for (var tries = 0; ; tries++)
+        {
+            try
+            {
+                Directory.Move(restore, from);
+                return "";
+            }
+            catch (IOException e) when (!Denied(e) && tries < 20 && Directory.Exists(restore) && !Directory.Exists(from))
+            {
+                Thread.Sleep(250);   // a virus checker looking at the files just copied into the old copy
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // The link goes back, so the plugin still finds its files on the other drive.
+                if (was is not null && !Directory.Exists(from)) Link(from, was);
+                return Denied(e) ? NeedsAdmin : $"Windows wouldn't move the folder back ({e.Message}). Close your DAW and the plugin, then try again.";
+            }
+        }
     }
 
     /// <summary>A junction on Windows (no administrator rights or developer mode needed), a symbolic link elsewhere.</summary>
@@ -376,14 +398,17 @@ public static class FolderMove
     /// <summary>Runs the administrator step when the app was started for it. Returns false when it wasn't.</summary>
     public static bool RunHelper(string[] args)
     {
-        if (args.Length == 4 && args[0] == HelperFlag && args[1] == "relink")
+        if (args.Length == 5 && args[0] == HelperFlag && args[1] == "relink")
         {
             try
             {
-                var lines = File.ReadAllLines(args[2]).Select(l => l.Split('\t', 2)).Where(x => x.Length == 2)
+                // Only the list as the app wrote it (see AdminStep.Digest); the result file is made before anything changes.
+                var list = File.ReadAllLines(args[2]);
+                if (AdminStep.Digest(list) != args[3]) return true;
+                var lines = list.Select(l => l.Split('\t', 2)).Where(x => x.Length == 2)
                                 .Select(x => (At: x[0], Said: RelinkHere(x[0], x[1])))
                                 .Select(x => $"{x.At}\t{(x.Said == NeedsAdmin ? "Windows wouldn't allow it even as administrator." : x.Said)}");
-                File.WriteAllLines(args[3], lines);
+                AdminStep.WriteResult(args[4], lines);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             return true;
@@ -396,7 +421,7 @@ public static class FolderMove
             ("unswap", _) => UnswapHere(args[2], args[3]),
             _ => "?",
         };
-        try { File.WriteAllText(args[^1], said == NeedsAdmin ? "Windows wouldn't allow it even as administrator." : said); }
+        try { AdminStep.WriteResult(args[^1], [said == NeedsAdmin ? "Windows wouldn't allow it even as administrator." : said]); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return true;
     }
@@ -458,6 +483,30 @@ public static class FolderMove
         return (now, problems);
     }
 
+    /// <summary>
+    /// Whether the old copy beside the link can go: the link is there and points at the copy on the other drive, and
+    /// that copy is there. Not when the drive is unplugged or the copy was moved or renamed (then the old copy is the
+    /// only one the plugin could use), nor when an update put a real folder back where the link was.
+    /// </summary>
+    public static bool OldCopyCanGo(MovedFolder moved)
+    {
+        if (!moved.HasOldCopy || !Directory.Exists(moved.To)) return false;
+        try
+        {
+            if (new DirectoryInfo(moved.From).LinkTarget is not { } target) return false;
+            var points = Path.GetFullPath(target, Path.GetDirectoryName(Path.GetFullPath(moved.From))!);
+            return Path.TrimEndingDirectorySeparator(points).Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(moved.To)), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return false; }
+    }
+
+    /// <summary>
+    /// Whether a folder left behind can go: it's there, and no moved folder (or its link) still lives in it. After a
+    /// move of the Plugin Data folder, a link that couldn't be pointed at the new place still points into the old one.
+    /// </summary>
+    public static bool OldHomeCanGo(OldHome home, IReadOnlyList<MovedFolder> moved) =>
+        Directory.Exists(home.Path) && !moved.Any(m => DiskSpace.IsInside(m.To, home.Path) || DiskSpace.IsInside(m.From, home.Path));
+
     /// <summary>The moved folders whose link points at nothing: their folder on the other drive was moved or renamed.</summary>
     public static IReadOnlyList<MovedFolder> Lost(IReadOnlyList<MovedFolder> moved) =>
         moved.Where(m => IsLink(m.From) && !Directory.Exists(m.To)).ToList();
@@ -503,8 +552,9 @@ public static class FolderMove
         var result = list + ".result";
         try
         {
-            File.WriteAllLines(list, guarded.Select(g => $"{g.At}\t{g.Target}"));
-            var admin = AdminStep.Run(HelperFlag, "relink", list, result);
+            var lines = guarded.Select(g => $"{g.At}\t{g.Target}").ToList();
+            File.WriteAllLines(list, lines);
+            var admin = AdminStep.Run(HelperFlag, "relink", list, AdminStep.Digest(lines), result);
             var said = admin.Length == 0 && File.Exists(result)
                 ? File.ReadAllLines(result).Select(l => l.Split('\t', 2)).Where(x => x.Length == 2).ToDictionary(x => x[0], x => x[1], StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

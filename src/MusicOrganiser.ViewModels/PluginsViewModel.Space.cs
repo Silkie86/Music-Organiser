@@ -87,10 +87,14 @@ public sealed partial class PluginsViewModel
             if (byKey.TryGetValue(s.Key, out var exact) && !claimed.Contains(s.Key)) Give(exact, s);
             else rest.Add(s);
         }
+        // Every Waves plugin lives in one WaveShell file, and projects name them one by one ("CLA-76 Stereo"), so the
+        // shell is used whenever a project uses a Waves plugin.
+        var wavesUsed = used.Any(u => IsWaves(u.Name, u.Vendor));
         foreach (var s in rest)
         {
             var family = PluginCatalog.Family(s.Name);
             var close = families.Where(f => Matched(f.Family, family)).ToList();
+            if (close.Count == 0 && wavesUsed && IsShell(s)) continue;   // used, so never offered (as below)
             if (close.Count == 0)
             {
                 rows.Add(new PluginUsage(s.Name, s.Vendor, FormatOf(s), 0, "", true) { Bytes = s.Bytes, SharedBytes = s.SharedBytes, Unused = true });
@@ -101,6 +105,13 @@ public sealed partial class PluginsViewModel
         }
         return rows;
     }
+
+    static bool IsWaves(string name, string vendor) =>
+        PluginCatalog.IsWaves(name, "") || vendor.StartsWith("Waves", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>A Waves shell: the one file every Waves plugin lives in.</summary>
+    static bool IsShell(PluginSpaceInfo s) =>
+        PluginCatalog.IsWaves(s.Name, "") || s.Folders.Any(f => f.Kind == SpaceKind.Program && PluginCatalog.IsWaves(s.Name, f.Path));
 
     static bool Matched(string a, string b) =>
         a.Length >= 4 && b.Length >= 4 && (a == b || a.Contains(b, StringComparison.Ordinal) || b.Contains(a, StringComparison.Ordinal));
@@ -205,20 +216,60 @@ public sealed partial class PluginsViewModel
         var protectedRoots = meter.ProtectedRoots();
         bool NoProjects(string key) =>
             _rowSpace.Where(r => r.Value.Key == key).All(r => r.Key.Projects == 0);
+        // Why a plugin's folder has to stay because of how projects use the plugin, or "".
+        string InUse(SpaceFolder f, PluginUsage p) =>
+            f.Shared && !f.SharedWith.All(NoProjects) ? $"Shared with {NamesOf(f.SharedWith)}, which your projects use."
+            : f.Kind == SpaceKind.Sounds && (p.Projects > 0 || !f.SharedWith.All(NoProjects))
+                ? $"Sounds stay while a project uses {p.Name}: {(p.Projects == 1 ? "1 project does" : $"{p.Projects} projects do")}."
+            : !p.Unused ? $"Your projects still use {p.Name}."
+            : "";
         var folders = space.Folders.Where(f => f.Kind != SpaceKind.Program).OrderByDescending(f => f.Bytes).ToList();
-        // Which folders hold a sample a project uses: read in the background (the samples table is big).
-        var holding = await Task.Run(() => folders.ToDictionary(f => f.Path, f => _db.SampleInside(f.Path)));
+        var spaces = _spaces.Values.ToList();
+        // Which folders hold a sample a project uses, and which hold another listed folder (a maker's folder holds its
+        // plugins' own, which were measured apart): read in the background (the samples table is big).
+        var (holding, inside) = await Task.Run(() =>
+            (folders.ToDictionary(f => f.Path, f => _db.SampleInside(f.Path)), folders.ToDictionary(f => f.Path, f => FoldersInside(f.Path, spaces))));
+        // Removing a folder removes the folders in it, so one holding a folder that has to stay stays too.
+        string Holds(SpaceFolder f)
+        {
+            foreach (var (s, g) in inside[f.Path])
+            {
+                if (g.Kind == SpaceKind.Program) return $"It holds {Path.GetFileName(g.Path)}, {s.Name}'s plugin file: Uninstall removes that.";
+                var rows = _rowSpace.Where(r => r.Value.Key == s.Key).Select(r => r.Key).ToList();
+                // A plugin without a row of its own counts as used (see WithSpace).
+                var why = rows.Count == 0 ? $"Your projects still use {s.Name}." : rows.Select(r => InUse(g, r)).FirstOrDefault(w => w.Length > 0);
+                if (why is { Length: > 0 }) return $"It holds {Path.GetFileName(g.Path)}, which stays. {why}";
+            }
+            return "";
+        }
+        string Why(SpaceFolder f) =>
+            PluginSpace.IsInstallFolder(f.Path) ? "Inside Program Files: Uninstall removes this."
+            : protectedRoots.FirstOrDefault(r => DiskSpace.IsInside(f.Path, r) || DiskSpace.IsInside(r, f.Path)) is { } mine ? $"Part of your folder {mine}."
+            : holding[f.Path] is { } sample ? $"A project uses a sample in it ({Path.GetFileName(sample)})."
+            : InUse(f, p) is { Length: > 0 } use ? use
+            : Holds(f);
+        // A sample found here under another path than the project's (an old PC's, a drive with a new letter) counts too.
+        // That means walking the folders, so only the ones that would be offered are, as a job you can stop.
+        var walk = folders.Where(f => Why(f).Length == 0).Select(f => f.Path).ToList();
+        if (walk.Count > 0)
+        {
+            using var stop = new CancellationTokenSource();
+            var activity = _main.Activities.Start($"Checking {p.Name}'s folders", "Looking for samples your projects use", cancel: stop.Cancel);
+            try
+            {
+                var named = await Task.Run(() => _db.SamplesNamedIn(walk, stop.Token), stop.Token);
+                foreach (var (folder, sample) in named) holding[folder] = sample;
+                activity.Finish($"Checked {p.Name}'s folders");
+            }
+            catch (OperationCanceledException)
+            {
+                activity.Stop($"Stopped checking {p.Name}'s folders", "Nothing was removed.");
+                return;
+            }
+        }
         var items = folders.Select(f =>
         {
-            var why =
-                PluginSpace.IsInstallFolder(f.Path) ? "Inside Program Files: Uninstall removes this."
-                : protectedRoots.FirstOrDefault(r => DiskSpace.IsInside(f.Path, r) || DiskSpace.IsInside(r, f.Path)) is { } mine ? $"Part of your folder {mine}."
-                : holding[f.Path] is { } sample ? $"A project uses a sample in it ({Path.GetFileName(sample)})."
-                : f.Shared && !f.SharedWith.All(NoProjects) ? $"Shared with {NamesOf(f.SharedWith)}, which your projects use."
-                : f.Kind == SpaceKind.Sounds && (p.Projects > 0 || !f.SharedWith.All(NoProjects))
-                    ? $"Sounds stay while a project uses {p.Name}: {(p.Projects == 1 ? "1 project does" : $"{p.Projects} projects do")}."
-                : !p.Unused ? $"Your projects still use {p.Name}."
-                : "";
+            var why = Why(f);
             return new CleanupItem(f, why, ticked: why.Length == 0 && f.Kind == SpaceKind.Sounds);
         }).ToList();
         var card = new SpaceCard(this)
@@ -233,6 +284,10 @@ public sealed partial class PluginsViewModel
         card.Refresh();
         Card = card;
     }
+
+    /// <summary>The listed folders, any plugin's, that are inside this one (a maker's folder holds its plugins' own).</summary>
+    internal static List<(PluginSpaceInfo Space, SpaceFolder Folder)> FoldersInside(string path, IReadOnlyList<PluginSpaceInfo> spaces) =>
+        spaces.SelectMany(s => s.Folders.Where(g => DiskSpace.IsInside(g.Path, path) && !DiskSpace.IsInside(path, g.Path)).Select(g => (s, g))).ToList();
 
     async Task DeleteAsync(SpaceCard card, string key)
     {
@@ -259,22 +314,30 @@ public sealed partial class PluginsViewModel
         if ((row ?? Selected) is not { } p || !_rowSpace.TryGetValue(p, out var space)) return;
         Selected = p;
         SideTab = 1;
-        var found = await Task.Run(() => Uninstallers.For(p.Name, p.Vendor, Uninstallers.All()));
+        var installed = Items.Where(i => i.Installed).Select(i => i.Name).ToList();
+        var found = await Task.Run(() => Uninstallers.For(p.Name, p.Vendor, Uninstallers.All(), installed));
         var files = space.Folders.Where(f => f.Kind == SpaceKind.Program).ToList();
+        // Binning a WaveShell would take every Waves plugin with it.
+        var shell = IsShell(space);
         var card = new SpaceCard(this)
         {
             Title = $"Uninstall {p.Name}?",
             Warning = p.Projects > 0 ? $"{(p.Projects == 1 ? "1 project uses" : $"{p.Projects} projects use")} it. They'll open with {p.Name} missing." : "",
+            Empty = found.Count == 0 && shell ? "Every Waves plugin lives in this one file, so it isn't removed here. Use Waves Central to remove Waves plugins." : "",
         };
         if (found.Count > 0)
         {
-            card.Intro = "This runs its own uninstaller, the same one Windows Settings › Apps uses. It opens in its own window and may ask questions.";
+            // Another version's uninstaller (Ozone 11's for Ozone 9) would remove a plugin you may still use: you pick it yourself.
+            var other = Uninstallers.IsOtherVersion(p.Name, found[0], installed);
+            card.Intro = "This runs its own uninstaller, the same one Windows Settings › Apps uses. It opens in its own window and may ask questions." +
+                         (other ? $" These look like other versions of {p.Name}, not this one. Pick one only if you're sure it's the right one." : "");
             card.Uninstallers = found;
-            card.PickedUninstaller = found[0];
+            card.MustPick = other;
+            card.PickedUninstaller = other ? null : found[0];
             card.ConfirmText = "Uninstall";
             card.Confirm = () => RunUninstallerAsync(card, space.Key, files.Select(f => f.Path).ToList());
         }
-        else
+        else if (!shell)
         {
             card.Intro = OperatingSystem.IsWindows()
                 ? "Windows has no uninstaller for it that's still there. Its plugin files can go to the Recycle Bin instead (Windows may ask for administrator rights):"
@@ -386,7 +449,22 @@ public sealed partial class PluginsViewModel
             Items = _spares.Select(c => new CleanupItem(new SpaceFolder(c.Path, SpaceKind.Program, c.Bytes, [], false), "", ticked: true,
                                                         label: $"{c.Name} · {c.Format}", detail: c.Why)).ToList(),
         };
-        card.Confirm = () => DeleteAsync(card, "");
+        card.Confirm = async () =>
+        {
+            // Checked again against your projects as they are now: the list is made once a week, and a song saved since
+            // may use a format it calls spare.
+            card.Busy = true;
+            var now = await Task.Run(() => new SpaceMeter(_db).SpareCopiesNow());
+            var still = now.Select(c => c.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var stale = card.Items.Where(i => i.IsTicked && !still.Contains(i.Folder.Path)).ToList();
+            foreach (var i in stale) i.IsTicked = false;
+            var kept = stale.Where(i => File.Exists(i.Path) || Directory.Exists(i.Path)).ToList();
+            _db.SaveSpareCopies(now);
+            if (kept.Count > 0)
+                _main.Activities.Failed(kept.Count == 1 ? $"Kept {kept[0].Name}" : $"Kept {kept.Count} of the copies",
+                                        "Your projects use those formats now, so they stay.");
+            await DeleteAsync(card, "");
+        };
         card.Refresh();
         Card = card;
     }
@@ -489,8 +567,11 @@ public sealed partial class SpaceCard(PluginsViewModel owner) : ObservableObject
     /// <summary>For Uninstall: the uninstallers that may be this plugin's, best first, and the one picked.</summary>
     public IReadOnlyList<Uninstaller> Uninstallers { get; set; } = [];
     public bool HasUninstallers => Uninstallers.Count > 0;
-    public bool HasChoice => Uninstallers.Count > 1;
+    public bool HasChoice => Uninstallers.Count > 1 || MustPick;
+    /// <summary>None is picked for you (they're for other versions): even a single one is yours to pick.</summary>
+    public bool MustPick { get; set; }
     [ObservableProperty] Uninstaller? _pickedUninstaller;
+    partial void OnPickedUninstallerChanged(Uninstaller? value) => Refresh();
 
     /// <summary>"Delete 35.5 GB", or "Uninstall".</summary>
     [ObservableProperty] string _confirmText = "";
