@@ -47,7 +47,9 @@ public static class FolderMove
 
     /// <summary>Why the folder can't move to <paramref name="destination"/>, or "" when it can.</summary>
     /// <param name="driveOf">Which drive a path is on (tests stand in a second drive with a folder).</param>
-    public static string Problem(string from, string destination, long bytes, Func<string, long>? freeSpace = null, Func<string, string>? driveOf = null)
+    /// <param name="ct">Stops the look through the folder for OneDrive files (a big folder takes a while).</param>
+    public static string Problem(string from, string destination, long bytes, Func<string, long>? freeSpace = null, Func<string, string>? driveOf = null,
+                                 CancellationToken ct = default)
     {
         from = Path.TrimEndingDirectorySeparator(Path.GetFullPath(from));
         destination = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destination));
@@ -66,7 +68,7 @@ public static class FolderMove
             if (drive.DriveType is DriveType.Network) return "Windows can't point a folder at a network drive. Pick a drive in this PC.";
         }
         // Copying a OneDrive file that's only online downloads it first, onto the drive being freed, and the size left it out.
-        if (DiskSpace.HasOnlineOnly(from)) return OnlineOnly;
+        if (DiskSpace.HasOnlineOnly(from, ct)) return OnlineOnly;
         var free = (freeSpace ?? FreeSpace)(destination);
         if (free >= 0 && free < bytes + Headroom)
             return $"That drive has {DiskSpace.Text(free)} free; this needs {DiskSpace.Text(bytes)} and some room to spare.";
@@ -103,7 +105,7 @@ public static class FolderMove
                                    Func<string, string>? driveOf = null)
     {
         from = Path.TrimEndingDirectorySeparator(Path.GetFullPath(from));
-        var problem = Problem(from, destination, bytes, driveOf: driveOf);
+        var problem = Problem(from, destination, bytes, driveOf: driveOf, ct: ct);
         if (problem.Length > 0) throw new IOException(problem);
         var target = Target(from, destination);
         // Find out before copying whether Windows lets the folder be renamed, rather than after an hour of copying.

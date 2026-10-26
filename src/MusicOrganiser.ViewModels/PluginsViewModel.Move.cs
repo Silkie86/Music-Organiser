@@ -95,7 +95,12 @@ public sealed partial class PluginsViewModel
             var bytes = await Task.Run(() => DiskSpace.Measure(folder.Path, stop.Token).Bytes, stop.Token);
             folder = folder with { Bytes = bytes };
             (admin, problem) = await Task.Run(() =>
-                FolderMove.Problem(folder.Path, destination, folder.Bytes) is { Length: > 0 } why ? (false, why) : FolderMove.CheckSwap(folder.Path));
+            {
+                if (FolderMove.Problem(folder.Path, destination, folder.Bytes, ct: stop.Token) is { Length: > 0 } why) return (false, why);
+                stop.Token.ThrowIfCancellationRequested();   // stopped while it looked: the folder isn't renamed to check it can be
+                return FolderMove.CheckSwap(folder.Path);
+            }, stop.Token);
+            stop.Token.ThrowIfCancellationRequested();   // stopped during that check: no card
         }
         catch (OperationCanceledException)
         {

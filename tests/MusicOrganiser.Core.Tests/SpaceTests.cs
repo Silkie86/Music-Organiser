@@ -1058,6 +1058,32 @@ public class SpaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Stop_while_a_move_is_checked_opens_no_card()
+    {
+        using var page = new Page(_root);
+        var hive = Path.GetDirectoryName(File("C/Hive/pad.h2p", 300))!;
+        page.Db.ReplaceInstalledPlugins(["Hive"]);
+        page.Db.SavePluginSpaces([Space("Hive", 300, hive)], all: true);
+        var plugins = page.Main.Plugins;
+        plugins.Reload();
+        plugins.Selected = plugins.Items.Single(p => p.Name == "Hive");
+        ((ViewModelTests.HeadlessUi)Ui.Current).PickedFolder = Directory.CreateDirectory(Path.Combine(_root, "D")).FullName;
+        using var ui = new MoProbeLiveTests.HeldUpContext();
+        await ui.Run(async () =>
+        {
+            var moving = plugins.MoveFolderAsync(new SpaceFolder(hive, SpaceKind.Sounds, 300, []));
+            Thread.Sleep(200);   // measured by now: Stop comes while it looks for what would stop the move
+            page.Main.Activities.Items.Single(a => a.Title == "Checking Hive").CancelCommand.Execute(null);
+            await moving;
+            return true;
+        });
+        Assert.Null(plugins.Card);
+        Assert.Contains(page.Main.Activities.Items, a => a.Title == "Stopped checking Hive");
+        Assert.DoesNotContain(page.Main.Activities.Items, a => a.Title.StartsWith("Can't move"));
+        Assert.True(System.IO.File.Exists(Path.Combine(hive, "pad.h2p")));
+    }
+
+    [Fact]
     public void The_administrator_steps_act_only_on_the_list_the_app_wrote()
     {
         var keep = File("Old Library/a.wav");
