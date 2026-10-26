@@ -1616,6 +1616,10 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     ProgressionModel? _model;
     string _modelFor = "";
+    /// <summary>The learning going on now and what it's for, so callers asking meanwhile wait for it instead of starting their own.</summary>
+    Task<ProgressionModel>? _learning;
+    string _learningFor = "";
+    CancellationTokenSource? _learningCts;
 
     int _nextRequest;
 
@@ -1629,12 +1633,23 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (catalogue is null) return _model ??= ProgressionModel.Learn([]).With(ProgressionModel.FromCharts);
         var songs = Harmony.Songs;
         var key = string.Join("|", songs.OrderBy(s => s)) + ":" + catalogue.Entries.Count;
-        if (_model is null || _modelFor != key)
+        if (_model is not null && _modelFor == key) return _model;
+        // One run through every chord part for each set of songs left out: one for songs no longer in the idea is stopped.
+        if (_learning is null || _learningFor != key)
         {
-            var model = await UiWork.Run(() => ProgressionModel.Learn(catalogue.Entries, songs).With(ProgressionModel.FromCharts));
-            (_model, _modelFor) = (model, key);
+            _learningCts?.Cancel();
+            var cts = _learningCts = new CancellationTokenSource();
+            _learningFor = key;
+            _learning = UiWork.Run(() => ProgressionModel.Learn(catalogue.Entries, songs, cts.Token).With(ProgressionModel.FromCharts));
         }
-        return _model;
+        var learning = _learning;
+        try
+        {
+            var model = await learning;
+            if (_learning == learning) (_model, _modelFor, _learning) = (model, key, null);
+            return model;
+        }
+        catch (OperationCanceledException) { return null; }   // the songs changed meanwhile: the newer call learns for them
     }
 
     /// <summary>The page opened: the MIDI is read and learned from once, then the next chords and Harmonise use it.</summary>
