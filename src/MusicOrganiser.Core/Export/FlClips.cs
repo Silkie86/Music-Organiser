@@ -68,11 +68,14 @@ static class FlClips
     public static IReadOnlyList<NoteEvent> Lengthen(IReadOnlyList<NoteEvent> notes, long clipLength, Func<int, long?>? longest = null)
     {
         if (!notes.Any(n => n.Step)) return notes;
-        var starts = notes.ToLookup(n => n.Key, n => n.Start);
+        // Each key's starts in order, so the next is found by halves: a whole song's steps can all be on one key.
+        var starts = notes.GroupBy(n => n.Key).ToDictionary(g => g.Key, g => g.Select(n => n.Start).Distinct().Order().ToArray());
         return notes.Select(n =>
         {
             if (!n.Step) return n;
-            var next = starts[n.Key].Where(s => s > n.Start).DefaultIfEmpty(clipLength).Min();
+            var on = starts[n.Key];
+            var i = Array.BinarySearch(on, n.Start);   // always there: it's this note's own start
+            var next = i + 1 < on.Length ? on[i + 1] : clipLength;
             var length = Math.Min(next, clipLength) - n.Start;
             if (longest?.Invoke(n.Key) is { } most) length = Math.Min(length, most);
             return n with { Length = Math.Max(n.Length, length) };

@@ -785,4 +785,19 @@ public class MidiWriterTests
         var s = Encoding.Latin1.GetString(bytes);
         Assert.True(s.IndexOf("\x80\x3C\x00", StringComparison.Ordinal) < s.LastIndexOf("\x90\x3C\x64", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void FlStepSequencerStepsAreWrittenAsSixteenthsNotOneTick()
+    {
+        // Kicks on each beat and two hats a 32nd apart, as FL's step sequencer stores them (no length), and a played note.
+        var clip = new MidiClip { Name = "Drums", Ppq = 96 };
+        foreach (var at in new long[] { 0, 96, 192, 288 }) clip.Track("Kick").Add(new NoteEvent(at, 1, 36, 100, Step: true));
+        clip.Track("Kick").Add(new NoteEvent(0, 1, 42, 100, Step: true));
+        clip.Track("Kick").Add(new NoteEvent(12, 1, 42, 100, Step: true));
+        clip.Track("Kick").Add(new NoteEvent(0, 192, 60, 100));
+        var notes = MusicOrganiser.Core.Midi.MidiFileReader.Read(MidiWriter.Write(clip), "Drums").SelectMany(p => p.Notes).ToList();
+        Assert.All(notes.Where(n => n.Key == 36), n => Assert.Equal(24, n.Length));
+        Assert.Equal([12L, 24L], notes.Where(n => n.Key == 42).OrderBy(n => n.Start).Select(n => n.Length));   // never over the next hat
+        Assert.Equal(192, notes.Single(n => n.Key == 60).Length);
+    }
 }
