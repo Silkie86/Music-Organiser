@@ -65,15 +65,19 @@ public sealed partial class SamplesViewModel : ObservableObject, IFileDragSource
     }
 
     [RelayCommand]
-    void FindMatches()
+    async Task FindMatches()
     {
-        if (Selected is null) return;
+        if (Selected is not { } sample) return;
         if (_db.SampleIndexCount() == 0)
         {
             MatchMessage = "Add your sample folders in Settings and index them to search your drives.";
             return;
         }
-        Matches = MatchFinder.ForSample(_db, Selected.Path);
+        MatchMessage = "Looking through your sample folders…";
+        // Off the window's thread: every file in the sample folders is compared with the name.
+        var matches = await UiWork.Run(() => MatchFinder.ForSample(_db, sample.Path));
+        if (Selected != sample) return;   // another sample picked meanwhile
+        Matches = matches;
         MatchMessage = Matches.Count == 0 ? "No similar files in your sample folders." : $"{Matches.Count} possible matches";
     }
 

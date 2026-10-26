@@ -629,8 +629,23 @@ public sealed partial class LibraryDb : IDisposable
 
     public int SampleIndexCount() => Query("SELECT COUNT(*) AS n FROM sample_index", r => (int)(long)r["n"]).First();
 
-    public IReadOnlyList<(string Path, string StemKey)> SampleIndex() =>
-        Query("SELECT path, stem_key FROM sample_index", r => ((string)r["path"], Str(r, "stem_key")));
+    /// <summary>Every file in the sample index with its name's key. Don't change the list: the same one is handed out again.</summary>
+    /// <remarks>
+    /// The last list read is kept while the sample folders haven't changed (<see cref="SampleIndexRevision"/>), and only
+    /// as long as memory allows: Fix asks for it once per missing sample, and reading 350,000 rows each time held its
+    /// plan up for tens of seconds.
+    /// </remarks>
+    public IReadOnlyList<(string Path, string StemKey)> SampleIndex()
+    {
+        var revision = SampleIndexRevision;
+        if (_sampleIndexRead is { } last && last.Revision == revision && last.List.TryGetTarget(out var kept)) return kept;
+        var list = Query("SELECT path, stem_key FROM sample_index", r => ((string)r["path"], Str(r, "stem_key")));
+        _sampleIndexRead = new(revision, new(list));
+        return list;
+    }
+
+    sealed record SampleIndexRead(long Revision, WeakReference<IReadOnlyList<(string Path, string StemKey)>> List);
+    volatile SampleIndexRead? _sampleIndexRead;
 
     public IReadOnlyList<string> SamplesNamed(string fileName) =>
         Query("SELECT path FROM sample_index WHERE file_name = $n", r => (string)r["path"], ("$n", fileName));

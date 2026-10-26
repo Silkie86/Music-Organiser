@@ -623,7 +623,7 @@ public sealed partial class SampleRow(LibraryDb db, ProjectSample s, ProjectItem
     [ObservableProperty] string _matchMessage = "";
 
     [RelayCommand]
-    void FindMatches()
+    async Task FindMatches()
     {
         Matches.Clear();
         if (db.SampleIndexCount() == 0)
@@ -631,7 +631,11 @@ public sealed partial class SampleRow(LibraryDb db, ProjectSample s, ProjectItem
             MatchMessage = "Add your sample folders in Settings and index them to search your drives.";
             return;
         }
-        foreach (var m in MatchFinder.ForSample(db, s.Path)) Matches.Add(new MatchRow(m, this));
+        MatchMessage = "Looking through your sample folders…";
+        // Off the window's thread: every file in the sample folders is compared with the name.
+        var found = await UiWork.Run(() => MatchFinder.ForSample(db, s.Path));
+        Matches.Clear();
+        foreach (var m in found) Matches.Add(new MatchRow(m, this));
         MatchMessage = Matches.Count == 0 ? "No similar files in your sample folders." : "";
     }
 

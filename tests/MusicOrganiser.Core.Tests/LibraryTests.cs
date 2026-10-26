@@ -705,6 +705,23 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void Finding_matches_reads_the_sample_index_once_until_it_changes_and_still_finds_longer_names()
+    {
+        // Fix looks for every missing sample in turn: the 350,000-file index was read again for each one.
+        var lib = Path.Combine(Fixtures.TempDir(), "Samples");
+        _db.ReplaceSampleIndex([Path.Combine(lib, "Big Room Festival Kick 01.wav"), Path.Combine(lib, "Snare.wav")]);
+        var first = _db.SampleIndex();
+        Assert.Same(first, _db.SampleIndex());
+        _db.UpdateSampleIndex([Path.Combine(lib, "Hat.wav")]);   // gone, as the folder watcher says
+        Assert.NotSame(first, _db.SampleIndex());
+
+        // A name much longer than the missing one still matches by how it ends.
+        var matches = MatchFinder.ForSample(_db, @"C:\Old Drive\Kick 01.wav");
+        Assert.Equal([Path.Combine(lib, "Big Room Festival Kick 01.wav")], matches.Select(m => m.Candidate));
+        Assert.Equal(MatchFinder.Similarity("kick01", "bigroomfestivalkick01"), matches[0].Score);
+    }
+
+    [Fact]
     public void Projects_using_a_sample_are_found_by_its_path_without_reading_every_sample()
     {
         // "Projects using it" on the Sounds page: with no index on the path, every sample of 16,700 projects was read.
