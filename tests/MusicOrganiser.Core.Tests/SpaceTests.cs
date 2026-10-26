@@ -823,6 +823,24 @@ public class SpaceTests : IDisposable
     }
 
     [Fact]
+    public void Thinning_and_identical_saves_together_keep_the_last_save_of_a_sitting()
+    {
+        var day = new DateTime(2026, 3, 1, 19, 0, 0);
+        SongSpace.Save S(string path, DateTime when) => new(path, new FileInfo(path).Length, when);
+        var s0 = S(File("Thin2/song_0.flp", 41, day), day);
+        var s1 = S(File("Thin2/song_1.flp", 300, day.AddMinutes(30)), day.AddMinutes(30));   // the end of the first sitting
+        // Two days on: opened and saved at once with nothing changed, then worked on.
+        var s2a = S(Copy(s1.Path, "Thin2/song_2a.flp", day.AddDays(2)), day.AddDays(2));
+        var s2b = S(File("Thin2/song_2b.flp", 52, day.AddDays(2).AddMinutes(30)), day.AddDays(2).AddMinutes(30));
+        var s2c = S(File("Thin2/song_2c.flp", 63, day.AddDays(2).AddMinutes(60)), day.AddDays(2).AddMinutes(60));
+        var r = SongSpace.Measure([s0, s1, s2a, s2b, s2c], [Path.Combine(_root, "Thin2")], new HashSet<string>(), sittingHours: 3);
+        var gone = r.Items.Where(i => i.Kind is CompactKind.SameSave or CompactKind.ThinnedSave).SelectMany(i => i.Paths).ToList();
+        Assert.Contains(s1.Path, gone);   // the copy goes…
+        Assert.DoesNotContain(s2a.Path, gone);   // …and the save just like it stays, so the sitting's last state does
+        Assert.Contains(s2b.Path, gone);
+    }
+
+    [Fact]
     public void Moving_back_puts_the_link_back_when_the_old_copy_cant_take_its_place()
     {
         var from = Path.GetDirectoryName(File("C/Docs/Hive/Sounds/pad.h2p", 300))!;

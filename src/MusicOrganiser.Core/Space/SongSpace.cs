@@ -146,8 +146,11 @@ public static class SongSpace
             }
 
         var items = new List<CompactItem>();
-        items.AddRange(SameSaves(saves, newest, ct));
-        var copies = items.SelectMany(i => i.Paths).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var same = SameSaves(saves, newest, ct).ToList();
+        items.AddRange(same.Select(s => s.Item));
+        // Neither a copy nor the save it's a copy of is thinned: removing both would lose what they held (the last save
+        // of a sitting, kept as a later identical save).
+        var copies = same.SelectMany(s => s.Item.Paths.Append(s.Kept)).ToHashSet(StringComparer.OrdinalIgnoreCase);
         items.AddRange(Thin(saves, sittingHours).Where(s => !copies.Contains(s.Path))
                            .Select(s => new CompactItem(CompactKind.ThinnedSave, [s.Path], File.Exists(s.Path) ? new FileInfo(s.Path).Length : s.Size,
                                                         $"Saved {s.Modified:d MMM yyyy HH:mm}")));
@@ -252,8 +255,9 @@ public static class SongSpace
     /// <summary>
     /// Saves that are exact copies of another save in the same folder (a DAW saving with nothing changed). Of each set the
     /// newest stays, so the save you'd open is never on the list. Only files of the same size are read, to compare them.
+    /// Each comes with the save that stays in its place.
     /// </summary>
-    static IEnumerable<CompactItem> SameSaves(IReadOnlyList<Save> saves, Save newest, CancellationToken ct)
+    static IEnumerable<(CompactItem Item, string Kept)> SameSaves(IReadOnlyList<Save> saves, Save newest, CancellationToken ct)
     {
         var sets = saves.Where(s => File.Exists(s.Path))
                         .GroupBy(s => (Folder: (Path.GetDirectoryName(s.Path) ?? "").ToLowerInvariant(), Size: new FileInfo(s.Path).Length))
@@ -265,7 +269,7 @@ public static class SongSpace
             {
                 var keep = same.Any(s => s == newest) ? newest : same.MaxBy(s => s.Modified)!;
                 foreach (var s in same.Where(s => s != keep))
-                    yield return new(CompactKind.SameSave, [s.Path], bySize.Key.Size, $"Same as {Path.GetFileName(keep.Path)}");
+                    yield return (new(CompactKind.SameSave, [s.Path], bySize.Key.Size, $"Same as {Path.GetFileName(keep.Path)}"), keep.Path);
             }
         }
     }
