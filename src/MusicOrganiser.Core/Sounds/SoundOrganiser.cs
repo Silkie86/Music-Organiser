@@ -331,6 +331,9 @@ public sealed class SoundOrganiser : IDisposable
         return results.Count + removed + moved;
     }
 
+    /// <summary>Most same-name pairs weighed among files of one size and time; past it they're left unpaired.</summary>
+    const long MostPairs = 200_000;
+
     /// <summary>
     /// Pairs files gone from the library with new ones that are the same files renamed or moved: a rename or move keeps
     /// a file's size and modified time. Among files that share those (a pack's loops often do), each pairs with the one
@@ -348,13 +351,18 @@ public sealed class SoundOrganiser : IDisposable
             var olds = group.Select(g => g.Path).ToList();
             var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var unsure = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var alike = olds.SelectMany(o => news.Select(n => (From: o, To: n, Same: SameEnding(o, n)))).Where(a => a.Same > 0).ToList();
+            // Only files with the same name can end the same way, so each is weighed against those alone, not every new file.
+            var byName = news.ToLookup(NameOf, StringComparer.OrdinalIgnoreCase);
+            if (olds.Sum(o => (long)byName[NameOf(o)].Count()) > MostPairs) continue;   // thousands of copies: too many to tell apart
+            var alike = olds.SelectMany(o => byName[NameOf(o)].Select(n => (From: o, To: n, Same: SameEnding(o, n)))).ToList();
             foreach (var level in alike.GroupBy(a => a.Same).OrderByDescending(g => g.Key))
             {
                 var open = level.Where(a => !used.Contains(a.From) && !used.Contains(a.To) && !unsure.Contains(a.From) && !unsure.Contains(a.To)).ToList();
+                var froms = open.CountBy(a => a.From, StringComparer.OrdinalIgnoreCase).ToDictionary(StringComparer.OrdinalIgnoreCase);
+                var tos = open.CountBy(a => a.To, StringComparer.OrdinalIgnoreCase).ToDictionary(StringComparer.OrdinalIgnoreCase);
                 foreach (var a in open)
                 {
-                    if (open.Count(o => o.From == a.From) == 1 && open.Count(o => o.To == a.To) == 1)
+                    if (froms[a.From] == 1 && tos[a.To] == 1)
                     {
                         moves.Add((a.From, a.To));
                         used.Add(a.From);
@@ -374,6 +382,8 @@ public sealed class SoundOrganiser : IDisposable
                 moves.Add((oldLeft[0], newLeft[0]));
         }
         return moves;
+
+        static string NameOf(string path) => path[(path.LastIndexOfAny(['\\', '/']) + 1)..];
 
         // How many names at the end of two paths are the same: 1 for the file name, 2 for it and its folder, and so on.
         static int SameEnding(string a, string b)
