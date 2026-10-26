@@ -1084,6 +1084,35 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_sound_counted_by_its_name_shows_the_projects_with_a_copy_of_it()
+    {
+        void Save(string name, params (string, bool)[] samples)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            _db.Upsert(new LibraryDb.IndexedFile(file, 100, 1, new ProjectInfo { Daw = "FL Studio" }, null, samples, []));
+        }
+        void SaveOne(string name, string sample) => Save(name, (sample, true));
+        // A big library: more samples, all missing (which the samples list puts first), than that list holds.
+        Save("Big", Enumerable.Range(0, 20_001).Select(i => ($@"C:\Gone\{i}.wav", false)).ToArray());
+        SaveOne("Heel", @"K:\Bitwig Studio\Projects\Heel\samples\Vox Chop 7.wav");   // a collected copy
+        SaveOne("Teka", "Vox Chop 7.wav");   // just its name
+        SaveOne("Garage", @"K:\Packs\Not Vox Chop 7.wav");   // another sound, whose name only ends the same
+        SaveOne("Bossa", @"K:\Packs\Snare.wav");
+        _soundDb.Save([new SoundLibrary.Analysed("/samples/Vocals/Vox Chop 7.wav", 1, 1, null, null, null, null)]);
+        _sounds.Reload();
+        var main = Main();
+        var lab = main.Sounds;
+        lab.Selected = lab.Items.Single();
+        Assert.Equal(2, lab.Selected.UsedIn);
+
+        await lab.ShowProjectsCommand.ExecuteAsync(null);
+
+        Assert.Equal(["Heel", "Teka"], main.Projects.View.Cast<ProjectItem>().Select(i => i.Name).Order());
+        Assert.Equal("Projects using Vox Chop 7", main.Projects.IdFilterLabel);
+    }
+
+    [Fact]
     public async Task Notes_detected_for_a_sound_arent_shown_once_another_sound_is_picked()
     {
         var chord = Path.Combine(AppContext.BaseDirectory, "Data", "chord-and-melody-22k.wav");

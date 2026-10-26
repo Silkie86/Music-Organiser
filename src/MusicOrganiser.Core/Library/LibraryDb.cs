@@ -882,6 +882,16 @@ public sealed partial class LibraryDb : IDisposable
 
     public IReadOnlyList<long> ProjectsUsingSample(string path) =>
         Query("SELECT DISTINCT project_id FROM samples WHERE path = $p COLLATE NOCASE", r => (long)r["project_id"], ("$p", path));
+
+    /// <summary>
+    /// Projects using a sample by its file name, wherever their copy of it is (Bitwig's collected copies, a relative
+    /// path): Sound Lab counts a sound by its name when no project has it at its own path and no other sound shares it.
+    /// </summary>
+    public IReadOnlyList<long> ProjectsUsingSampleNamed(string fileName) => fileName.Length == 0 ? [] : Query("""
+        SELECT DISTINCT project_id FROM samples
+        WHERE substr(path, -length($n)) = $n COLLATE NOCASE
+          AND (length(path) = length($n) OR substr(path, -length($n) - 1, 1) IN ('\', '/'))
+        """, r => (long)r["project_id"], ("$n", fileName));
 }
 
 /// <summary>Which projects count as using a sound (Settings › Sounds), for projects whose reader can tell (FL Studio so far).</summary>

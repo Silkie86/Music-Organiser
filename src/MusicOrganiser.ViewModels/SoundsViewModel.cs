@@ -1279,18 +1279,20 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Refresh();
     }
 
+    /// <summary>
+    /// The projects the sound's "Used in" counts: those with it at its own path, else (as the count does) those with a
+    /// copy of the same name anywhere. Looked up in the background: the name means reading every project's samples.
+    /// </summary>
     [RelayCommand]
-    void ShowProjects()
+    async Task ShowProjects()
     {
-        if (Selected is { UsedIn: > 0 } s)
-        {
-            var ids = _db.ProjectsUsingSample(s.Path).ToList();
-            if (ids.Count == 0)
-                ids = _db.SampleUsage().Where(u => u.Path.Split('\\', '/')[^1].Equals(Path.GetFileName(s.Path), StringComparison.OrdinalIgnoreCase))
-                         .SelectMany(u => _db.ProjectsUsingSample(u.Path)).Distinct().ToList();
-            _main.Projects.ShowOnly(ids, $"Projects using {s.Name}");
-            _main.ShowProjects();
-        }
+        if (Selected is not { UsedIn: > 0 } s) return;
+        var path = s.Path;
+        var ids = await UiWork.Run(() => _db.ProjectsUsingSample(path) is { Count: > 0 } atPath
+            ? atPath
+            : _db.ProjectsUsingSampleNamed(Path.GetFileName(path)));
+        _main.Projects.ShowOnly(ids, $"Projects using {s.Name}");
+        _main.ShowProjects();
     }
 }
 
