@@ -486,10 +486,18 @@ public sealed class BitwigLink : IDisposable
     /// </summary>
     public string? OnlyIn { get; set; }
 
+    /// <summary>
+    /// Whether Bitwig refused a request, or stopped a change part way, because another project than <see cref="OnlyIn"/>
+    /// is in front (in the words both the extension and the script use).
+    /// </summary>
+    public static bool IsElsewhere(DawLinkException e) =>
+        e.Message.StartsWith("Bitwig has \"", StringComparison.Ordinal) &&
+        e.Message.EndsWith("\", so the link stopped before changing anything there.", StringComparison.Ordinal);
+
     /// <summary>The commands that change or select something in the project, as the script and the extension list them.</summary>
     /// <remarks>Not recordabort, which must reach the record job whatever project is in front.</remarks>
     static readonly HashSet<string> ProjectCommands = ["set", "insert", "newtrack", "clip", "pads", "transpose", "action", "recorder", "arrange", "select",
-                                                       "filetrack", "record", "probe"];
+                                                       "filetrack", "record", "probe", "stoptracks"];
 
     BitwigLink(TcpClient tcp)
     {
