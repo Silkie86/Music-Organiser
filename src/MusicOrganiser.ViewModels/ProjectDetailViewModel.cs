@@ -20,6 +20,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public const string StepsUntilNextNoteKey = "bitwig_steps_until_next_note";
     /// <summary>"1" when converting swaps older versions of the template's synth (Serum) for the template's own (Serum 2).</summary>
     public const string UpgradeSynthsKey = "bitwig_upgrade_synths";
+    /// <summary>What's remembered about a Bitwig copy the app converted (<see cref="Exporter.Written"/>), by its file.</summary>
+    public static string BitwigConvertKey(string file) => $"bitwig_convert:{file}";
     public static string DawExeKey(string daw) => $"daw_exe:{daw}";
 
     readonly LibraryDb _db;
@@ -361,18 +363,30 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             var path = save.Path;
             var untilNextNote = _db.GetSetting(StepsUntilNextNoteKey) == "1";
             var upgrade = _db.GetSetting(UpgradeSynthsKey) == "1";
-            // A new convert saved over a copy Bitwig has open would look unchanged there, so it gets a fresh name.
+            // A new convert saved over a copy Bitwig has open would look unchanged there, and one saved over a copy changed
+            // in Bitwig (or another song's with the same name) would lose that work, so either way it gets a fresh name.
             var bitwig = _main.Live.State(DawState.Bitwig);
             if (bitwig is { Running: false }) OpenedInBitwig.Clear();
-            var saveAs = Exporter.BitwigName(path, n => OpenedInBitwig.Contains(n) ||
-                                                        bitwig is { Answering: true } && bitwig.Project.Trim().Equals(n, StringComparison.OrdinalIgnoreCase));
-            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote, upgrade, saveAs));
+            var opened = OpenedInBitwig.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var front = bitwig is { Answering: true } ? bitwig.Project.Trim() : null;
+            var plain = Exporter.BitwigName(path, _ => false);
+            // Looking at the earlier converts reads the disk, so it's done off the window's thread with the converting.
+            var (file, leftOut, saveAs, kept) = await Task.Run(() =>
+            {
+                var exportRoot = ExportRoot;
+                bool Kept(string n) => Exporter.BitwigFile(path, exportRoot, n) is var f && !Exporter.CanSaveOver(path, f, _db.GetSetting(BitwigConvertKey(f)));
+                var saveAs = Exporter.BitwigName(path, n => opened.Contains(n) || n.Equals(front, StringComparison.OrdinalIgnoreCase) || Kept(n));
+                var kept = saveAs != plain && Kept(plain);
+                var (file, leftOut) = Exporter.BitwigFromFl(path, exportRoot, File.ReadAllBytes(template), untilNextNote, upgrade, saveAs);
+                _db.SetSetting(BitwigConvertKey(file), Exporter.Written(path, file));
+                return (file, leftOut, saveAs, kept);
+            });
             await OpenWithBitwig(_db, file);
             OpenedInBitwig.Add(saveAs);
-            var renamed = saveAs != Exporter.BitwigName(path, _ => false)
-                ? " It has a new name because Bitwig may still have an earlier convert open, and would show that one instead. " +
-                  "Close the old one without saving."
-                : "";
+            var renamed = saveAs == plain ? ""
+                : kept ? " It has a new name so the earlier convert isn't saved over: it may have been changed in Bitwig, or be another song's with the same name."
+                : " It has a new name because Bitwig may still have an earlier convert open, and would show that one instead. " +
+                  "Close the old one without saving.";
             Message = $"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig.{renamed}" +
                       (leftOut.Count == 0 ? "" : $" Not carried over: {string.Join("; ", leftOut.Take(4))}" +
                                                  $"{(leftOut.Count > 4 ? $"; and {leftOut.Count - 4} more, listed in the notes saved next to it" : "")}.");

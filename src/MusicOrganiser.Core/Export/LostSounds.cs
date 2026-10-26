@@ -18,18 +18,30 @@ public static class LostSounds
     {
         if (!Lost(song)) return (song, []);
         var (name, number) = SongVersions.Split(Path.GetFileNameWithoutExtension(path));
-        var older = Directory.EnumerateFiles(Path.GetDirectoryName(Path.GetFullPath(path))!, "*.flp")
-            .Select(f => (File: f, Version: SongVersions.Split(Path.GetFileNameWithoutExtension(f))))
-            .Where(f => f.Version.Song.Equals(name, StringComparison.OrdinalIgnoreCase) && f.Version.Number < number)
-            .OrderByDescending(f => f.Version.Number)
-            .Select(f => f.File)
-            .ToList();
+        List<string> older;
+        try
+        {
+            older = Directory.EnumerateFiles(Path.GetDirectoryName(Path.GetFullPath(path))!, "*.flp")
+                .Select(f => (File: f, Version: SongVersions.Split(Path.GetFileNameWithoutExtension(f))))
+                .Where(f => f.Version.Song.Equals(name, StringComparison.OrdinalIgnoreCase) && f.Version.Number < number)
+                .OrderByDescending(f => f.Version.Number)
+                .Select(f => f.File)
+                .ToList();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return (song, []); }   // it converts without them
 
         var taken = new List<string>();
         foreach (var file in older)
         {
+            // Each save read once, into memory used again for the next: a song can be 50 MB, and it can have dozens of saves.
+            using var once = ReadOnce.Scope();
             FlSong old;
-            try { old = Readers.FlStudio.ReadSong(file); }
+            try
+            {
+                // A quick look first, without copying out every plugin's sound, at whether it has one of the lost ones.
+                if (!HasAny(Readers.FlStudio.ReadSong(file, sounds: false), song)) continue;
+                old = Readers.FlStudio.ReadSong(file);
+            }
             catch (Exception) { continue; }   // a damaged save, or one this reader can't read
             var from = Path.GetFileNameWithoutExtension(file);
 
@@ -71,7 +83,21 @@ public static class LostSounds
         song.Channels.Any(c => c.Instrument is { NothingSaved: true }) || song.Inserts.Any(i => i.Effects.Any(e => e.NothingSaved));
 
     /// <summary>The same plugin, with a sound saved for it.</summary>
-    static bool Same(FlPlugin? old, FlPlugin lost) =>
-        old is { State: not null } && old.Format == lost.Format &&
+    static bool Same(FlPlugin? old, FlPlugin lost) => old is { State: not null } && SamePlugin(old, lost);
+
+    static bool SamePlugin(FlPlugin old, FlPlugin lost) =>
+        old.Format == lost.Format &&
         (lost.DeviceId.Length > 0 ? old.DeviceId == lost.DeviceId : old.Name.Equals(lost.Name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Whether an older save, read without its sounds, may have one of the song's lost sounds: the same plugin, and it
+    /// didn't give FL nothing there.
+    /// </summary>
+    static bool HasAny(FlSong old, FlSong song)
+    {
+        static IEnumerable<FlPlugin> Plugins(FlSong s) =>
+            s.Channels.Select(c => c.Instrument).Concat(s.Inserts.SelectMany(i => i.Effects)).OfType<FlPlugin>();
+        var lost = Plugins(song).Where(p => p.NothingSaved).ToList();
+        return Plugins(old).Any(o => !o.NothingSaved && lost.Any(l => SamePlugin(o, l)));
+    }
 }

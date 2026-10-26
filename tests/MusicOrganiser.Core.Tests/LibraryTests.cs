@@ -681,7 +681,7 @@ public class LibraryTests : IDisposable
     {
         var scanner = new Scanner(_db);
         scanner.ScanProjects();
-        Assert.Equal("6", _db.GetSetting("reader_version:FL Studio"));
+        Assert.Equal("7", _db.GetSetting("reader_version:FL Studio"));
         Directory.CreateDirectory(Path.Combine(_root, "bounce"));
         File.WriteAllBytes(Path.Combine(_root, "bounce", "Kick 01.wav"), [0]);
 
@@ -691,7 +691,7 @@ public class LibraryTests : IDisposable
         _db.SetSetting("reader_version:FL Studio", "1");   // as a library last read with the older FL reader
         scanner.ScanProjects();
         Assert.Equal(0, _db.Projects().Single(x => x.Daw == "FL Studio").MissingSamples);
-        Assert.Equal("6", _db.GetSetting("reader_version:FL Studio"));
+        Assert.Equal("7", _db.GetSetting("reader_version:FL Studio"));
     }
 
     [Fact]
