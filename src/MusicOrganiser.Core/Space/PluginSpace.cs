@@ -243,12 +243,15 @@ public static class PluginSpace
         return result;
     }
 
+    // The folders in a folder, links to other places left out (a folder moved to another drive isn't guessed again).
+    // OneDrive's folders carry the same flag as links without being one, so they stay in.
     static IEnumerable<string> SubFolders(string dir)
     {
         try
         {
-            return Directory.EnumerateDirectories(dir, "*", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint })
-                            .ToList();
+            return new DirectoryInfo(dir).EnumerateDirectories("*", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 })
+                                         .Where(d => !d.Attributes.HasFlag(FileAttributes.ReparsePoint) || !DiskSpace.IsLink(d))
+                                         .Select(d => d.FullName).ToList();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
     }

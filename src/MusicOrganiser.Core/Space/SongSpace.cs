@@ -173,10 +173,7 @@ public static class SongSpace
 
     static IEnumerable<(string Path, long Size, DateTime Modified)> Walk(string folder, CancellationToken ct)
     {
-        var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
-        var entries = new System.IO.Enumeration.FileSystemEnumerable<(string, long, DateTime)>(folder,
-            (ref System.IO.Enumeration.FileSystemEntry e) => (e.ToFullPath(), e.Length, e.LastWriteTimeUtc.LocalDateTime), options)
-        { ShouldIncludePredicate = (ref System.IO.Enumeration.FileSystemEntry e) => !e.IsDirectory };
+        var entries = DiskSpace.Files(folder, (ref System.IO.Enumeration.FileSystemEntry e) => (e.ToFullPath(), e.Length, e.LastWriteTimeUtc.LocalDateTime));
         var n = 0;
         foreach (var e in entries)
         {

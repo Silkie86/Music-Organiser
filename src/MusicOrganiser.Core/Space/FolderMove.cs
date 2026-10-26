@@ -39,17 +39,11 @@ public static class FolderMove
     public static string Target(string from, string destination) =>
         Path.Combine(destination, Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(from))));
 
-    /// <summary>Whether the folder is a link to another place (moved already, or set up that way).</summary>
-    public static bool IsLink(string path)
-    {
-        try
-        {
-            // A link whose folder has gone still counts: it's the link that's there.
-            var info = new DirectoryInfo(path);
-            return info.LinkTarget is not null || info.Exists && info.Attributes.HasFlag(FileAttributes.ReparsePoint);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
-    }
+    /// <summary>
+    /// Whether the folder is a link to another place (moved already, or set up that way). A link whose folder has gone
+    /// still counts: it's the link that's there. A OneDrive folder isn't one, though Windows marks it the same way.
+    /// </summary>
+    public static bool IsLink(string path) => DiskSpace.IsLink(new DirectoryInfo(path));
 
     /// <summary>Why the folder can't move to <paramref name="destination"/>, or "" when it can.</summary>
     /// <param name="driveOf">Which drive a path is on (tests stand in a second drive with a folder).</param>

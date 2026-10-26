@@ -613,4 +613,23 @@ public class SpaceTests : IDisposable
         projects.BiggestFirst = true;
         Assert.Equal("garage sept", projects.View.Cast<ProjectItem>().First().Name);
     }
+
+    // ---- found by the whole-app review (2026-10-26) -----------------------------------------------------------------
+
+    [Fact]
+    public void Size_walks_skip_links_to_other_places_but_count_real_folders()
+    {
+        File("lib/a.wav", 100);
+        File("lib/presets/b.fxp", 30);
+        var elsewhere = Path.GetDirectoryName(File("elsewhere/big.wav", 5000))!;
+        var lib = Path.Combine(_root, "lib");
+        Directory.CreateSymbolicLink(Path.Combine(lib, "linked"), elsewhere);
+        Directory.CreateSymbolicLink(Path.Combine(lib, "gone"), Path.Combine(_root, "nowhere"));
+        Assert.Equal(130, DiskSpace.Measure(lib).Bytes);   // the linked folder's 5000 bytes live elsewhere
+        Assert.True(FolderMove.IsLink(Path.Combine(lib, "linked")));
+        Assert.True(FolderMove.IsLink(Path.Combine(lib, "gone")));   // a link whose place has gone is still a link
+        Assert.False(FolderMove.IsLink(Path.Combine(lib, "presets")));
+        Assert.False(FolderMove.IsLink(lib));
+    }
+
 }
