@@ -92,14 +92,18 @@ public partial class App : Application
 
     // The errors in or waiting for their box, by Key.
     readonly List<(string Key, string Message)> _errors = [];
-    // Every error this run: how many times it has happened, when it last did, and whether its box has been up.
-    readonly Dictionary<string, (int Times, long Last, bool Shown)> _seen = [];
+    // Every error this run: how many times it has happened, when it last did, whether its box has been up, and whether
+    // it keeps coming back (while its box was up or waiting, or straight after the time before).
+    readonly Dictionary<string, (int Times, long Last, bool Shown, bool Repeating)> _seen = [];
 
     /// <summary>
-    /// How long an error must stay away before its box comes back: a button that fails twice says so twice, but one from
-    /// a timer or drawing, which comes back many times a second, doesn't bring its box straight back.
+    /// How long an error that keeps coming back must stay away before its box comes back: one from a timer or drawing,
+    /// which comes back many times a second, doesn't bring its box straight back. A button that fails twice says so twice.
     /// </summary>
     internal const long QuietMs = 10_000;
+
+    /// <summary>An error back this soon after the time before is one that keeps coming back.</summary>
+    internal const long RepeatMs = 1_000;
 
     /// <summary>
     /// Which error this is: its kind and where it came from, not just its words. Different bugs often say the same thing
@@ -110,15 +114,20 @@ public partial class App : Application
     /// <summary>
     /// Whether to show an error's box (and log it in full). One that keeps happening (from a timer, or drawing) brought
     /// its box straight back each time it was closed, so the app couldn't be used: a repeat is held back while its box is
-    /// up or waiting, or when it last happened under <see cref="QuietMs"/> ago, and the run log counts those. One whose
-    /// box never went up (the window wasn't showing yet) is shown the next time it happens.
+    /// up or waiting, and one that came back then (or within <see cref="RepeatMs"/>) until it has stayed away for
+    /// <see cref="QuietMs"/>; the run log counts those. One that only happens again later, as when a button is pressed
+    /// again, gets its box again. One whose box never went up (the window wasn't showing yet) is shown the next time.
     /// </summary>
     internal bool ShouldShow(Exception error, long nowMs)
     {
         var key = Key(error);
-        var (times, last, shown) = _seen.GetValueOrDefault(key);
-        _seen[key] = (++times, nowMs, shown);
-        if (times == 1 || (!_errors.Exists(x => x.Key == key) && (!shown || nowMs - last >= QuietMs))) return true;
+        var (times, last, shown, repeating) = _seen.GetValueOrDefault(key);
+        var waiting = _errors.Exists(x => x.Key == key);
+        if (times > 0 && (waiting || nowMs - last < RepeatMs)) repeating = true;
+        var show = times == 0 || (!waiting && (!shown || !repeating || nowMs - last >= QuietMs));
+        if (show) repeating = false;
+        _seen[key] = (++times, nowMs, shown, repeating);
+        if (show) return true;
         if (times is 2 or 10 or 100 or 1000 or 10_000)
             SessionLog.Current?.Info("App", $"The same error again ({times} times now): {error.GetType().Name}: {error.Message}");
         return false;
