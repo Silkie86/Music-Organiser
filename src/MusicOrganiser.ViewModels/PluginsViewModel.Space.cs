@@ -500,7 +500,9 @@ public sealed partial class PluginsViewModel
     {
         if (_spares.Count == 0) return;
         var order = SpareFormats.Select(f => f.Format).ToList();
-        var items = _spares.OrderBy(c => order.FindIndex(f => f.Equals(c.Format, StringComparison.OrdinalIgnoreCase)))
+        // The format picked comes first, so the card opens on the ones it ticked.
+        var items = _spares.OrderBy(c => format is not null && c.Format.Equals(format, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                           .ThenBy(c => order.FindIndex(f => f.Equals(c.Format, StringComparison.OrdinalIgnoreCase)))
                            .ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
                            .Select(c => new CleanupItem(new SpaceFolder(c.Path, SpaceKind.Program, c.Bytes, [], false), "",
                                                         ticked: format is null || c.Format.Equals(format, StringComparison.OrdinalIgnoreCase),

@@ -1347,18 +1347,18 @@ public class SpaceTests : IDisposable
         plugins.SpareFormats[1].ReviewCommand.Execute(null);
         var card = plugins.Card!;
         Assert.Equal("Remove the spare VST2 copies?", card.Title);
-        Assert.Equal(["Serum · AAX", "Diva · VST2", "Serum · VST2", "Vital · CLAP"], card.Items.Select(i => i.Name));
+        Assert.Equal(["Diva · VST2", "Serum · VST2", "Serum · AAX", "Vital · CLAP"], card.Items.Select(i => i.Name));   // the format picked first
         Assert.Equal(["Diva · VST2", "Serum · VST2"], card.Items.Where(i => i.IsTicked).Select(i => i.Name));
-        Assert.Equal([("AAX", (bool?)false), ("VST2", true), ("CLAP", false)], card.Groups.Select(g => (g.Name, g.IsTicked)));
+        Assert.Equal([("VST2", (bool?)true), ("AAX", false), ("CLAP", false)], card.Groups.Select(g => (g.Name, g.IsTicked)));
         Assert.Equal("Delete 30 bytes", card.ConfirmText);
 
-        card.Groups[0].IsTicked = true;   // every AAX copy
+        card.Groups[1].IsTicked = true;   // every AAX copy
         Assert.Equal("Delete 80 bytes", card.ConfirmText);
         card.Items.Single(i => i.Name == "Diva · VST2").IsTicked = false;
-        Assert.Null(card.Groups[1].IsTicked);   // some of the VST2 copies
+        Assert.Null(card.Groups[0].IsTicked);   // some of the VST2 copies
         Assert.Equal("Delete 60 bytes", card.ConfirmText);
-        card.Groups[1].IsTicked = false;
-        Assert.Equal((bool?)false, card.Groups[1].IsTicked);
+        card.Groups[0].IsTicked = false;
+        Assert.Equal((bool?)false, card.Groups[0].IsTicked);
         Assert.Equal("Delete 50 bytes", card.ConfirmText);
         plugins.CloseCard();
 
