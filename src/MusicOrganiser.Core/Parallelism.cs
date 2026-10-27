@@ -96,6 +96,27 @@ public static class Parallelism
     /// <summary>Set while a sound is playing. Background work always steps aside now; kept for the players that set it.</summary>
     public static volatile bool AudioPlaying;
 
+    // Until when (Stopwatch ticks) background work starts nothing new: see QuietFor.
+    static long _quietUntil;
+
+    /// <summary>
+    /// Background work starts no new pieces for <paramref name="span"/> (pieces already going finish): the user is doing
+    /// something that has to answer at once, such as sweeping the galaxy, where each star's file has to open while the
+    /// mouse is still over it. Each call sets a new end, so a sweep keeps it quiet and letting go ends it soon after.
+    /// (Solomon, 2026-10-27: "missed some sounds when sweeping at first", with Deep listening reading files on 10 cores.)
+    /// </summary>
+    public static void QuietFor(TimeSpan span) =>
+        Interlocked.Exchange(ref _quietUntil, System.Diagnostics.Stopwatch.GetTimestamp() + (long)(span.TotalSeconds * System.Diagnostics.Stopwatch.Frequency));
+
+    /// <summary>Background work is holding back for the user (<see cref="QuietFor"/>).</summary>
+    public static bool Quiet => QuietLeft() > 0;
+
+    static int QuietLeft()
+    {
+        var left = Interlocked.Read(ref _quietUntil) - System.Diagnostics.Stopwatch.GetTimestamp();
+        return left <= 0 ? 0 : (int)Math.Min(int.MaxValue, Math.Ceiling(left * 1000.0 / System.Diagnostics.Stopwatch.Frequency));
+    }
+
     /// <summary>
     /// Runs one piece of background work below normal priority, in one of the shared <see cref="Workers"/> slots, so
     /// the window, the galaxy and playback always get the CPU first.
@@ -107,7 +128,14 @@ public static class Parallelism
         if (_depth > 0 || SynchronizationContext.Current is not null) return work();
         lock (Gate)
         {
-            while (_running >= _workers) Monitor.Wait(Gate);
+            while (true)
+            {
+                // Quiet ends by the clock, not by a pulse, so it waits no longer than what's left (looked at again a
+                // little at a time, as a new sweep can push the end on).
+                if (QuietLeft() is > 0 and var quiet) Monitor.Wait(Gate, Math.Min(quiet, 250));
+                else if (_running >= _workers) Monitor.Wait(Gate);
+                else break;
+            }
             _running++;
         }
         _depth++;

@@ -33,6 +33,26 @@ public class ResponsivenessTests
     }
 
     [Fact]
+    public async Task Background_work_holds_back_while_the_user_sweeps()
+    {
+        // Solomon, 2026-10-27: "missed some sounds when sweeping at first", with Deep listening reading files meanwhile
+        try
+        {
+            Parallelism.QuietFor(TimeSpan.FromSeconds(30));
+            Assert.True(Parallelism.Quiet);
+            var ran = false;
+            var piece = Task.Run(() => Parallelism.Background(() => ran = true));
+            await Task.Delay(300);
+            Assert.False(ran);   // waiting, not started
+
+            Parallelism.QuietFor(TimeSpan.FromMilliseconds(100));   // let go: it starts soon after
+            await piece.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(ran);
+        }
+        finally { Parallelism.QuietFor(TimeSpan.Zero); }
+    }
+
+    [Fact]
     public async Task Background_jobs_together_leave_cores_free_and_run_below_normal_priority()
     {
         var running = 0;
