@@ -98,9 +98,13 @@ sealed class UiWatchdog : IDisposable
                 // A hang that never ends (the app is closed from Task Manager) is written while it lasts, too.
                 var saidStuck = false;
                 string? stack = null;
+                // Dragging files out to a DAW or Explorer: on Windows the window's thread stays in the drag until the
+                // drop, however long the mouse is held (on 2026-10-27 a 9.3 s drag was logged as a freeze). Not a freeze.
+                var dragged = Views.FileDrag.Dragging;
                 while (!_stop && !answered.Wait(TimeSpan.FromSeconds(1)))
                 {
-                    if (Debugger.IsAttached) continue;
+                    dragged |= Views.FileDrag.Dragging;
+                    if (Debugger.IsAttached || dragged) continue;
                     // Still stuck after a second: which code it's in, so the line names the cause (on 2026-10-22 a 5 s
                     // freeze said only "waiting (Executive)").
                     if (stack is null && _stacksLeft > 0 && Stopwatch.GetElapsedTime(knocked) >= StackAfter)
@@ -114,7 +118,7 @@ sealed class UiWatchdog : IDisposable
                 }
                 if (_stop) return;
                 // Stopped at a breakpoint in Visual Studio: not a freeze.
-                if (Debugger.IsAttached) { Thread.Sleep(200); continue; }
+                if (Debugger.IsAttached || dragged || Views.FileDrag.Dragging) { Thread.Sleep(200); continue; }
                 var froze = Stopwatch.GetElapsedTime(knocked);
                 SessionLog.Current?.Warning("Freeze",
                     $"The app didn't respond for {Seconds(froze)}{where}" +

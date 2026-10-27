@@ -80,17 +80,27 @@ public sealed partial class LiveDawsViewModel : ObservableObject
                 if (state.SavedSince(before)) _saving[state.Daw] = new Saving(state, DateTime.UtcNow);
                 if (before is null || before.Project != state.Project || before.Answering != state.Answering) changed = true;
             }
-            if (changed) Match();
+            if (changed) await MatchAsync();
             else Show();
             await FollowSavesAsync();
         }
         finally { _polling = false; }
     }
 
-    /// <summary>Finds the library project each DAW has open, and shows it. Called when what they show or the library changes.</summary>
-    public void Match()
+    // Counts the matches, so one that started earlier and ends later doesn't show what was open before.
+    int _matches;
+
+    /// <summary>
+    /// Finds the library project each DAW has open, and shows it. Called when what they show or the library changes.
+    /// Looked up in the background: while a scan writes to the library the lookup can take seconds.
+    /// </summary>
+    public async Task MatchAsync()
     {
-        foreach (var (daw, state) in _states) _open[daw] = state.FindIn(_db);
+        var match = ++_matches;
+        var states = _states.ToList();
+        var found = await UiWork.Run(() => states.Select(s => (s.Key, Open: s.Value.FindIn(_db))).ToList());
+        if (match != _matches) return;
+        foreach (var (daw, open) in found) _open[daw] = open;
         MarkProjects();
         Show();
     }
@@ -183,7 +193,7 @@ public sealed partial class LiveDawsViewModel : ObservableObject
     async Task ScanForSaveAsync()
     {
         await _main.ScanAsync(false, plugins: false);
-        Match();
+        await MatchAsync();
     }
 
     async Task RereadAsync(ProjectSummary project, string daw)

@@ -266,10 +266,26 @@ public sealed partial class MainViewModel : ObservableObject
         _forward.Clear();
     }
 
+    // The page to open with next time, written in the background: a scan writing to the library holds it for seconds,
+    // and the window waited that long on every page switch. Each write takes the newest page, so an older one finishing
+    // last still leaves the right page.
+    string _lastPage = "";
+
+    void SaveLastPage(string title)
+    {
+        Volatile.Write(ref _lastPage, title);
+        _ = UiWork.Run(() =>
+        {
+            try { _db.SetSetting(LastPageKey, Volatile.Read(ref _lastPage)); }
+            catch (Exception e) when (e is ObjectDisposedException or InvalidOperationException or Microsoft.Data.Sqlite.SqliteException) { }
+            return 0;
+        });
+    }
+
     partial void OnSelectedNavChanged(NavItem value)
     {
         PageSizeChanged();
-        _db.SetSetting(LastPageKey, value.Title);
+        SaveLastPage(value.Title);
         if (value.Page == Midi || value.Page == Playground) Midi.Opened();   // the playground matches against the MIDI page's parts
         if (value.Page == Playground) Playground.Opened();
         if (value.Page != Midi) Midi.Left();
@@ -334,7 +350,7 @@ public sealed partial class MainViewModel : ObservableObject
             _soundsShown = projects;
             await Time("Sounds", Sounds.RefreshUsageAsync);
         }
-        Live.Match();   // the library may have the projects the DAWs have open now
+        await Live.MatchAsync();   // the library may have the projects the DAWs have open now
         AppLog.Info("Pages", times.Count == 0
             ? "Nothing new in the library, so the pages were left as they are"
             : $"Refreshed in {timer.Elapsed.TotalSeconds:0.00} s: {string.Join(", ", times)}");
