@@ -285,6 +285,48 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_damaged_save_that_isnt_the_songs_newest_can_be_fixed_from_its_row_into_a_copy_next_to_it()
+    {
+        // Solomon, 27 Oct: "because its not the latest version no option to fix i dont know_8". _9 is the newest and whole.
+        var dub = Path.Combine(_root, "dub");
+        Directory.CreateDirectory(dub);
+        File.WriteAllBytes(Path.Combine(dub, "i dont know_7.flp"), FlRepairTests.Song(3, FlRepairTests.OldNotes, finished: true));
+        File.WriteAllBytes(Path.Combine(dub, "i dont know_8.flp"),
+                           FlRepairTests.Unfinished(FlRepairTests.Song(2, FlRepairTests.NewNotes, finished: false)));
+        File.WriteAllBytes(Path.Combine(dub, "i dont know_9.flp"), FlRepairTests.Song(3, FlRepairTests.NewNotes, finished: true));
+        ScanFixtures();
+        var projects = Main().Projects;
+        projects.Reload();
+        projects.Selected = projects.Items.Single(i => i.Name == "i dont know");
+        var detail = projects.Detail!;
+        Assert.Equal("i dont know_9", detail.Item.FileName);
+        Assert.False(detail.CanFix);   // the toolbar's Fix is for the newest save, which is whole
+        Assert.Equal(["i dont know_8"], detail.SaveRows.Where(r => r.Damaged).Select(r => r.Save.Name));
+        var older = detail.SaveRows.Single(r => r.Damaged).Save;
+        Assert.True(detail.CanRepair(older));   // so Older saves offers Fix… on it too
+
+        await detail.FixSaveCommand.ExecuteAsync(older);
+        var repair = detail.FixRows.Single(r => r.Line.IsRepair);
+        Assert.Equal(Path.Combine(dub, "i dont know_7.flp"), repair.Use);   // finished from the save before it, not the newer _9
+        Assert.Equal("FIX I DONT KNOW_8: WHAT IT WILL DO", detail.FixHeading);
+        Assert.Equal("The save can be repaired", detail.FixSummary);   // not "· 1 found": no sample was looked for
+        Assert.Equal("i dont know_8 stays exactly as it is. The fixed copy is saved next to it as i dont know_8 (fixed).flp.", detail.FixFootnote);
+
+        await detail.SaveFixedCommand.ExecuteAsync(null);
+        var copy = Path.Combine(dub, "i dont know_8 (fixed).flp");
+        Assert.Empty(new FlStudioReader().Read(copy).Warnings);
+        Assert.Equal(copy, projects.Detail!.PendingFix);
+        Assert.EndsWith("Keep lists it with the song's saves, next to i dont know_8.", projects.Detail.PendingFixDetail);
+
+        // Kept: it sits beside the save it was made from, and the song still opens _9.
+        await projects.Detail.KeepFixedCommand.ExecuteAsync(null);
+        var song = projects.Items.Single(i => i.Name == "i dont know");
+        Assert.Equal("i dont know_9", song.FileName);
+        Assert.Equal(["i dont know_8 (fixed)", "i dont know_8", "i dont know_7"], song.OlderSaves.Select(o => o.Name));
+        Assert.False(projects.Detail!.HasPendingFix);
+    }
+
+    [Fact]
     public async Task An_fl_songs_unused_synths_are_found_only_while_its_panel_stays_open()
     {
         // Serum on "Pad" plays nothing; 3x Osc on "Bass" plays the notes.

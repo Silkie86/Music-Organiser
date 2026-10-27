@@ -843,6 +843,15 @@ public sealed partial class LibraryDb : IDisposable
         };
     }
 
+    /// <summary>
+    /// Which of these projects were read with one of these warnings, in the reader's own words as <see cref="ProjectDetail.Warnings"/>
+    /// has them, without reading the rest of each one.
+    /// </summary>
+    public IReadOnlySet<long> WarnedProjects(IEnumerable<long> ids, params string[] warnings) => Query("""
+        SELECT DISTINCT p.id FROM projects p, json_each(CASE WHEN json_valid(p.info) THEN p.info ELSE '{}' END, '$.Warnings') w
+        WHERE p.id IN (SELECT value FROM json_each($ids)) AND w.value IN (SELECT value FROM json_each($w))
+        """, r => (long)r["id"], ("$ids", JsonSerializer.Serialize(ids)), ("$w", JsonSerializer.Serialize(warnings))).ToHashSet();
+
     public void SaveOrganisation(ProjectSummary p) => SaveOrganisation(p, []);
 
     /// <summary>Your fields for a song, as <see cref="SaveOrganisation(ProjectSummary, IEnumerable{long}, OrganisationField)"/> with all of them.</summary>

@@ -46,7 +46,7 @@ public class FlRepairTests
     /// An FL 7 song: pattern 1's notes, then a channel each (its name and plugin, and <paramref name="extra"/> more
     /// events on channel 1), then, when FL finished, the playlist and the mixer.
     /// </summary>
-    static byte[] Song(int channels, byte[] notes, bool finished, bool extra = false, string snare = "Snare")
+    internal static byte[] Song(int channels, byte[] notes, bool finished, bool extra = false, string snare = "Snare")
     {
         var b = new Fixtures.FlpBuilder().Ascii(199, "7.0.0").Word(66, 140).Word(65, 1).Data(224, notes);
         for (var c = 0; c < channels; c++)
@@ -62,14 +62,14 @@ public class FlRepairTests
     }
 
     /// <summary>As FL leaves a save it didn't finish: junk where "FLdt" and its length belong (from Solomon's "_8").</summary>
-    static byte[] Unfinished(byte[] data)
+    internal static byte[] Unfinished(byte[] data)
     {
         new byte[] { 0xa4, 0xfb, 0x12, 0x00, 0xd9, 0x4a, 0xd7, 0x00 }.CopyTo(data, 14);
         return data;
     }
 
-    static readonly byte[] OldNotes = Note20(0, 0, 36);
-    static readonly byte[] NewNotes = [.. Note20(0, 0, 36), .. Note20(96, 1, 38)];
+    internal static readonly byte[] OldNotes = Note20(0, 0, 36);
+    internal static readonly byte[] NewNotes = [.. Note20(0, 0, 36), .. Note20(96, 1, 38)];
 
     [Fact]
     public void TellsASaveFlStoppedWritingPartWayFromOneWithOnlyItsHeaderGarbled()
@@ -219,6 +219,27 @@ public class FlRepairTests
         Assert.Equal(["Repaired the save, with its last channel, mixer and playlist from i dont know_7."], result.Notes);
         Assert.Equal(before, File.ReadAllBytes(path));
         Assert.Empty(new FlStudioReader().Read(result.Path).Warnings);
+    }
+
+    [Fact]
+    public void FixFindsEverySaveOfASongFlDidntFinishWritingNotJustTheNewest()
+    {
+        // Solomon's other "i dont know" (27 Oct): FL stopped writing _8, and a later _9 is the song's newest.
+        var root = Fixtures.TempDir();
+        var dir = Path.Combine(root, "dub");
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, "i dont know_6.flp"), Unfinished(Song(3, OldNotes, finished: true)));   // only its header garbled
+        File.WriteAllBytes(Path.Combine(dir, "i dont know_7.flp"), Song(3, OldNotes, finished: true));
+        File.WriteAllBytes(Path.Combine(dir, "i dont know_8.flp"), Unfinished(Song(2, NewNotes, finished: false)));
+        File.WriteAllBytes(Path.Combine(dir, "i dont know_9.flp"), Song(3, NewNotes, finished: true));
+        using var db = new LibraryDb(Path.Combine(root, "library.db"));
+        db.AddRoot(dir);
+        new Scanner(db).ScanProjects();
+
+        var saves = db.Projects();
+        var damaged = ProjectFixer.NeedingRepair(db, saves);
+        Assert.Equal(["i dont know_6", "i dont know_8"], saves.Where(s => damaged.Contains(s.Id)).Select(s => s.Name).Order());
+        Assert.Empty(ProjectFixer.NeedingRepair(db, saves.Where(s => s.Name is "i dont know_7" or "i dont know_9")));
     }
 
     [Fact]

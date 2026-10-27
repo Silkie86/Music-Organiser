@@ -112,6 +112,9 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         var installed = db.InstalledNames();
         _canSwapSerum = Detail is not null && ProjectFixer.CanSwapSerum(Detail, installed);
         _needsRepair = Detail is not null && ProjectFixer.NeedsRepair(Detail);
+        // Older saves FL didn't finish writing can be fixed too, from their row on the Saves tab or in Older saves.
+        _damaged = ProjectFixer.NeedingRepair(db, AllSaves);
+        SaveRows = AllSaves.Select(s => new SaveRow(s, CanRepair(s))).ToList();
         Plugins = Detail?.Plugins.Select(p => new PluginRow(db, p, installed)).ToList() ?? [];
         VisiblePlugins = Plugins;
         Samples = Detail?.Samples.Select(s => new SampleRow(db, s, item, this)).ToList() ?? [];
@@ -197,9 +200,17 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
 
     // ---- Which song the saves go under (Solomon, 19 Oct: "you should be able to change what list they go under") -------
 
-    /// <summary>Every save of the song, newest first, for the Saves tab.</summary>
+    /// <summary>Every save of the song, newest first.</summary>
     public IReadOnlyList<ProjectSummary> AllSaves => [Item.Summary, .. Item.OlderSaves];
+    /// <summary>The Saves tab's rows: every save, newest first, each saying whether Fix can repair it.</summary>
+    public IReadOnlyList<SaveRow> SaveRows { get; }
     public string AllSavesHeader => Item.SaveCount == 1 ? "1 save" : $"{Item.SaveCount} saves, newest first";
+
+    // The song's saves FL Studio didn't finish writing (Fix repairs them), by id.
+    readonly IReadOnlySet<long> _damaged;
+
+    /// <summary>Whether Fix can repair this save of the song: FL Studio didn't finish writing it, and it's still there.</summary>
+    public bool CanRepair(ProjectSummary save) => _damaged.Contains(save.Id) && !save.FileMissing;
 
     /// <summary>Whether you changed how this song's saves are grouped, so Reset has something to undo.</summary>
     public bool HasSongChanges => _main.Projects.Choices.Changed(Item.SongKey, AllSaves.Select(s => s.Path));

@@ -60,6 +60,13 @@ public static partial class ProjectFixer
         project.Summary.Path.EndsWith(".flp", StringComparison.OrdinalIgnoreCase) &&
         project.Warnings.Any(w => w is FlStudioReader.StoppedPartWay or FlStudioReader.GarbledHeader);
 
+    /// <summary>Which of these saves are damaged in a way Fix repairs (see <see cref="NeedsRepair"/>), by what the library read of them.</summary>
+    public static IReadOnlySet<long> NeedingRepair(LibraryDb db, IEnumerable<ProjectSummary> saves)
+    {
+        var flp = saves.Where(s => s.Path.EndsWith(".flp", StringComparison.OrdinalIgnoreCase)).Select(s => s.Id).ToList();
+        return flp.Count == 0 ? new HashSet<long>() : db.WarnedProjects(flp, FlStudioReader.StoppedPartWay, FlStudioReader.GarbledHeader);
+    }
+
     /// <summary>One line per missing sample and plugin, with the best guess for each, after a line for repairing the save itself if it's damaged.</summary>
     public static IReadOnlyList<FixLine> Plan(LibraryDb db, ProjectDetail project)
     {

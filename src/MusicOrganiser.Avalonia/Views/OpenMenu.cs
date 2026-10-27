@@ -29,6 +29,7 @@ public static class OpenMenu
                 ToolTip.SetTip(version, run.Run.Reworked || run.Run.First
                     ? $"Saved from {run.Run.Start:d MMM yyyy} to {run.Run.End:d MMM yyyy}"
                     : $"Saved from {run.Run.Start:d MMM yyyy} to {run.Run.End:d MMM yyyy}. Not much changed from the original: probably saved again to open it.");
+                if (d.CanRepair(run.Run.Last)) version.Items.Add(Item("Fix…", d.FixSaveCommand, ProjectDetailViewModel.RepairTip, run.Run.Last));
                 if (run.IsFlStudio) version.Items.Add(Item("Open in Bitwig", run.OpenInBitwigCommand, "Convert this save into a Bitwig project and open it"));
                 version.Items.Add(Item(run.OpenInDawText, run.OpenInDawCommand, null));
                 version.Items.Add(Item("Show in folder", run.RevealCommand, null));
@@ -59,7 +60,9 @@ public static class OpenMenu
             items.Add(new MenuItem { Header = "RECENT SAVES", IsEnabled = false, Classes = { "menuHeading" } });
             foreach (var save in d.OlderSaves.OrderByDescending(s => s.Modified).Take(OlderSavesShown))
             {
-                var item = new MenuItem { Header = Text($"{save.Name} · {save.Modified:d MMM yyyy}") };
+                var damaged = d.CanRepair(save);
+                var item = new MenuItem { Header = Text($"{save.Name} · {save.Modified:d MMM yyyy}{(damaged ? " · damaged" : "")}") };
+                if (damaged) item.Items.Add(Item("Fix…", d.FixSaveCommand, ProjectDetailViewModel.RepairTip, save));
                 if (save.Daw == "FL Studio") item.Items.Add(Item("Open in Bitwig", d.OpenSaveInBitwigCommand, "Convert this save into a Bitwig project and open it", save));
                 item.Items.Add(Item($"Open in {save.Daw}", d.OpenSaveCommand, null, save));
                 item.Items.Add(Item("Show in folder", d.RevealSaveCommand, null, save));

@@ -27,15 +27,26 @@ public sealed partial class ProjectDetailViewModel
     [ObservableProperty] string _fixSummary = "";
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(FixButtonText))] bool _fixBusy;
     public string FixButtonText => FixBusy ? "Looking…" : "Fix…";
+    /// <summary>What Fix does for a save FL Studio didn't finish writing.</summary>
+    public const string RepairTip = "FL Studio didn't finish writing this save. Fix saves a repaired copy next to the original, finished from an earlier save.";
     public string FixTip => _needsRepair
-        ? "FL Studio didn't finish writing this save. Fix saves a repaired copy next to the original, finished from an earlier save."
+        ? RepairTip
         : Item.HasMissing
         ? $"{Item.MissingText} missing, so it will open with gaps. Fix finds what it can on your drives and saves a repaired copy next to the original."
         : "Fix can swap Serum for Serum 2 in a copy next to the original, with Serum's sound translated.";
     [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(SaveFixedCommand))] int _fixTicked;
 
-    public string FixedName => System.IO.Path.GetFileName(ProjectFixer.FixedPath(Item.Path));
-    public string FixFootnote => $"The original stays exactly as it is. The fixed copy is saved next to it as {FixedName}.";
+    /// <summary>The save Fix's preview is for: the newest, or an older one picked on the Saves tab or in Older saves.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(FixedName), nameof(FixFootnote), nameof(FixHeading))] ProjectSummary? _fixingSave;
+    ProjectSummary FixTarget => FixingSave ?? Item.Summary;
+    bool FixingOlder => FixTarget.Id != Item.Id;
+
+    public string FixedName => System.IO.Path.GetFileName(ProjectFixer.FixedPath(FixTarget.Path));
+    public string FixFootnote => FixingOlder
+        ? $"{FixTarget.Name} stays exactly as it is. The fixed copy is saved next to it as {FixedName}."
+        : $"The original stays exactly as it is. The fixed copy is saved next to it as {FixedName}.";
+    /// <summary>The preview's title, which names the save when it's an older one.</summary>
+    public string FixHeading => FixingOlder ? $"FIX {FixTarget.Name.ToUpperInvariant()}: WHAT IT WILL DO" : "FIX: WHAT IT WILL DO";
 
     /// <summary>A fixed copy waiting for the verdict, or null.</summary>
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasPendingFix), nameof(PendingFixText), nameof(PendingFixDetail))] string? _pendingFix;
@@ -50,7 +61,9 @@ public sealed partial class ProjectDetailViewModel
               ? $" Bitwig opened the app's convert of it, which doesn't prove {Item.Daw} opens the fixed file: open it there too if you'll work on it there."
               : "")
         : $"Open it in {Item.Daw}{(IsFlStudio ? " or Bitwig" : "")} to check it, then say whether it loaded correctly. " +
-          "Until you keep it, the song still opens the original.";
+          (_pendingFrom is { } from && !from.Equals(Item.Path, StringComparison.OrdinalIgnoreCase)
+              ? $"Keep lists it with the song's saves, next to {System.IO.Path.GetFileNameWithoutExtension(from)}."
+              : "Until you keep it, the song still opens the original.");
 
     /// <summary>The save the waiting fixed copy was made from (its setting is kept under that path).</summary>
     string? _pendingFrom;
@@ -73,13 +86,37 @@ public sealed partial class ProjectDetailViewModel
 
     /// <summary>Works out the preview: one line per missing sample and plugin with the best guess.</summary>
     [RelayCommand]
-    async Task PlanFix()
+    Task PlanFix() => Detail is null ? Task.CompletedTask : PlanFixOf(Item.Summary, Detail);
+
+    /// <summary>
+    /// Fix for one of the song's saves, such as an older one FL Studio didn't finish writing (Solomon, 27 Oct: "because its
+    /// not the latest version no option to fix i dont know_8"): the same preview, for that save, and its fixed copy goes next to it.
+    /// </summary>
+    [RelayCommand]
+    async Task FixSave(ProjectSummary? save)
     {
-        if (Detail is null || FixBusy) return;
+        if (save is null || FixBusy) return;
+        if (save.Id == Item.Id)
+        {
+            await PlanFix();
+            return;
+        }
+        ProjectDetail? detail;
+        try { detail = await Task.Run(() => _db.Project(save.Id)); }
+        catch (Exception e)
+        {
+            Message = $"Fix couldn't read {save.Name}: {e.Message}";
+            return;
+        }
+        if (detail is not null) await PlanFixOf(save, detail);
+    }
+
+    async Task PlanFixOf(ProjectSummary save, ProjectDetail detail)
+    {
+        if (FixBusy) return;
         FixBusy = true;
         try
         {
-            var detail = Detail;
             // The first time, the sample folders haven't been searched yet: do that first, so Fix has somewhere to look.
             if (_db.SampleIndexCount() == 0 && _db.GetList(Scanner.SampleFoldersKey).Count > 0)
             {
@@ -89,9 +126,11 @@ public sealed partial class ProjectDetailViewModel
             }
             var lines = await Task.Run(() => ProjectFixer.Plan(_db, detail));
             var rows = lines.Select(l => new FixRow(l, this)).ToList();
+            // Which save it's for changes with the lines, never before: Save fixed copy on a preview still showing writes to its own save.
+            FixingSave = save;
             FixRows = rows;
             CountTicked();
-            var relink = lines.Count(l => l.Action == FixAction.Relink && !l.IsSwap);
+            var relink = lines.Count(l => l.Action == FixAction.Relink && !l.IsSwap && !l.IsRepair);
             var suggest = lines.Count(l => l.Action == FixAction.Suggestion && !l.IsSwap);
             var still = lines.Count(l => l.Action == FixAction.StillMissing);
             FixSummary = string.Join(" · ", new[]
@@ -129,10 +168,11 @@ public sealed partial class ProjectDetailViewModel
             samples > 0 ? $"relinking {SampleCount(samples)}" : null,
             use.Any(l => l.IsSwap) ? "swapping Serum for Serum 2" : null,
         }.OfType<string>());
-        var card = Activities.Start($"Fixing {Item.Name}", $"{char.ToUpper(doing[0])}{doing[1..]} in a copy");
+        var save = FixTarget;
+        var card = Activities.Start($"Fixing {(FixingOlder ? save.Name : Item.Name)}", $"{char.ToUpper(doing[0])}{doing[1..]} in a copy");
         try
         {
-            var path = Item.Path;
+            var path = save.Path;
             var result = await Task.Run(() => ProjectFixer.Write(path, use));
             var file = result.Path;
             _db.SetSetting(FixCheckKey(path), file);
@@ -161,7 +201,7 @@ public sealed partial class ProjectDetailViewModel
         catch (Exception e)
         {
             // The whole error, with where it happened and which project, so a failure on Solomon's PC can be traced.
-            AppLog.Info("Fix", $"Couldn't save a fixed copy of {Item.Path}: {e}");
+            AppLog.Info("Fix", $"Couldn't save a fixed copy of {save.Path}: {e}");
             Message = $"Fix couldn't save a fixed copy: {e.Message}";
             card.Fail("Fix couldn't save a fixed copy", e.Message);
         }
@@ -273,6 +313,12 @@ public sealed partial class ProjectDetailViewModel
         PendingFix = null;
         PendingFixOpened = false;
     }
+}
+
+/// <summary>One save on the Saves tab, and whether it's one FL Studio didn't finish writing, so its row offers Fix.</summary>
+public sealed record SaveRow(ProjectSummary Save, bool Damaged)
+{
+    public string FixTip => ProjectDetailViewModel.RepairTip;
 }
 
 /// <summary>One line of Fix's preview. Samples it found, or that you tick, go into the fixed copy.</summary>

@@ -186,6 +186,49 @@ public sealed class ProjectsPageTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_damaged_older_save_shows_as_damaged_and_offers_Fix_on_the_Saves_tab_and_in_Older_saves()
+    {
+        // Solomon, 27 Oct: "because its not the latest version no option to fix i dont know_8".
+        var folder = Path.Combine(_root, "dub");
+        Directory.CreateDirectory(folder);
+        foreach (var (name, days, damaged) in new[] { ("i dont know_8", 40, true), ("i dont know_9", 1, false) })
+        {
+            var file = Path.Combine(folder, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            File.SetLastWriteTime(file, DateTime.Now.AddDays(-days));
+            var info = new ProjectInfo { Daw = "FL Studio" };
+            if (damaged) info.Warnings.Add(FlStudioReader.StoppedPartWay);
+            _db.Upsert(new LibraryDb.IndexedFile(file, 1, new DateTimeOffset(File.GetLastWriteTime(file)).ToUnixTimeSeconds(), info, null, [], []));
+        }
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var page = main.Projects;
+        page.ReloadAsync().GetAwaiter().GetResult();
+        var window = new Window { Content = new ProjectsView { DataContext = page }, Width = 1400, Height = 900, Classes = { "studio" } };
+        window.Show();
+        page.Selected = page.Items.Single();
+        Settle();
+        var view = window.GetVisualDescendants().OfType<ProjectDetailView>().Single(v => v.DataContext == page.Detail);
+        Assert.False(page.Detail!.CanFix);   // the newest save is whole: no Fix… on the toolbar
+
+        // The Saves tab: only the damaged save's row is marked, with its own Fix….
+        view.GetVisualDescendants().OfType<Button>().Single(b => b.Classes.Contains("link") && (string?)b.Tag == "Saves")
+            .RaiseEvent(new global::Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Settle();
+        var fix = view.GetVisualDescendants().OfType<Button>().Where(b => b.IsEffectivelyVisible && b.Content is "Fix…").ToList();
+        Assert.Equal(["i dont know_8"], fix.Select(b => ((ProjectSummary)b.CommandParameter!).Name));
+        Assert.Same(page.Detail.FixSaveCommand, fix[0].Command);
+        Assert.Single(view.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text == "Damaged");
+
+        // Older saves: the damaged save says so, and Fix… comes first in its menu.
+        var older = (MenuFlyout)view.FindControl<Button>("OlderSaves")!.Flyout!;
+        var save = older.Items.OfType<MenuItem>().Single(i => i.Header is string h && h.StartsWith("i dont know"));
+        Assert.EndsWith(" · damaged", (string?)save.Header);
+        var first = save.Items.OfType<MenuItem>().First();
+        Assert.Equal(("Fix…", "i dont know_8"), ((string?)first.Header, ((ProjectSummary)first.CommandParameter!).Name));
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_songs_right_click_menu_shows_each_lines_key_and_has_the_keyed_actions()
     {
         // Review: the song menu showed no keys, and had no Fix or MIDI lines though they have keys.
