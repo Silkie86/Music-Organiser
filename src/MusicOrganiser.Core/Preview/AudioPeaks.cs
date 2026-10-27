@@ -47,24 +47,43 @@ public sealed record AudioPeaks(float[] Peaks, double Seconds)
         catch (Exception) { return false; }
     }
 
+    /// <summary>How much is read at a time: a long recording is gone through in parts, never decoded whole.</summary>
+    const double PartSeconds = 10;
+
     static AudioPeaks? Read(string path)
     {
         try
         {
             if (!File.Exists(path) || !AudioFile.CanRead(path)) return null;
-            var audio = AudioFile.Read(path, MaxSeconds);
+            // WAV and AIFF a part at a time: decoded whole, a 20 minute recording took most of a gigabyte for one waveform.
+            var part = AudioFile.CanReadFrom(path) ? PartSeconds : MaxSeconds;
+            var audio = AudioFile.Read(path, part, fromFrame: 0);
             if (audio.Length == 0 || audio.SampleRate <= 0) return null;
-            var slice = Math.Max(1, (int)(audio.SampleRate * SliceSeconds));
-            var peaks = new float[(audio.Length + slice - 1) / slice];
-            foreach (var channel in audio.Channels)
-                for (var i = 0; i < channel.Length; i++)
-                {
-                    var v = Math.Abs(channel[i]);
-                    ref var p = ref peaks[i / slice];
-                    if (v > p) p = v;
-                }
-            for (var i = 0; i < peaks.Length; i++) peaks[i] = Math.Min(1, peaks[i]);
-            return new AudioPeaks(peaks, audio.FileSeconds > 0 ? audio.FileSeconds : audio.Seconds);
+            var (rate, fileSeconds) = (audio.SampleRate, audio.FileSeconds);
+            var slice = Math.Max(1, (int)(rate * SliceSeconds));
+            var most = (long)(MaxSeconds * rate);
+            var peaks = new List<float>();
+            long done = 0;
+            while (true)
+            {
+                var frames = (int)Math.Min(audio.Length, most - done);
+                var need = (int)((done + frames + slice - 1) / slice);
+                while (peaks.Count < need) peaks.Add(0);
+                var span = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(peaks);
+                foreach (var channel in audio.Channels)
+                    for (var i = 0; i < frames; i++)
+                    {
+                        var v = Math.Abs(channel[i]);
+                        ref var p = ref span[(int)((done + i) / slice)];
+                        if (v > p) p = v;
+                    }
+                done += frames;
+                if (part >= MaxSeconds || audio.Length < (long)(part * rate) || done >= most) break;   // the end, or as far as is drawn
+                audio = AudioFile.Read(path, part, done);
+                if (audio.Length == 0) break;
+            }
+            var result = peaks.Select(p => Math.Min(1, p)).ToArray();
+            return new AudioPeaks(result, fileSeconds > 0 ? fileSeconds : (double)done / rate);
         }
         catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException or NotSupportedException or ArgumentException
                                        or System.Runtime.InteropServices.ExternalException)

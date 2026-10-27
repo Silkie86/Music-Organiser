@@ -34,7 +34,7 @@ public static class MatchFinder
         var exact = results.Select(r => r.Candidate).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var fuzzy = db.SampleIndex()
             .Where(s => !exact.Contains(s.Path))
-            .Select(s => (s.Path, Score: Similarity(stem, s.StemKey)))
+            .Select(s => (s.Path, Score: Similarity(stem, s.StemKey, atLeast: 0.5)))
             .Where(x => x.Score >= 0.5)
             .Select(x => (x.Path, x.Score, Folders: FolderMatch(folders, x.Path)))
             // A weaker name is only worth showing when it sits in the same pack's folders.
@@ -111,32 +111,44 @@ public static class MatchFinder
     /// 0..1 similarity of two normalised names: the better of edit-distance
     /// similarity and containment (one name inside the other, e.g. "kick01" in "bigkick01").
     /// </summary>
-    public static double Similarity(string a, string b)
+    public static double Similarity(string a, string b) => Similarity(a, b, atLeast: 0);
+
+    /// <summary>
+    /// <see cref="Similarity(string, string)"/>, skipping the whole-name comparison when the lengths alone keep it below
+    /// <paramref name="atLeast"/> (it can only lose a point for each letter one name has more): run over every file in
+    /// the sample index, that was most of the time. The answer is the same whenever it's <paramref name="atLeast"/> or more.
+    /// </summary>
+    static double Similarity(string a, string b, double atLeast)
     {
         if (a.Length == 0 || b.Length == 0) return 0;
         if (a == b) return 1;
-        var edit = 1.0 - (double)Levenshtein(a, b) / Math.Max(a.Length, b.Length);
+        var longest = Math.Max(a.Length, b.Length);
+        var edit = 1.0 - (double)Math.Abs(a.Length - b.Length) / longest < atLeast ? 0
+            : 1.0 - (double)Levenshtein(a, b) / longest;
         var (shortS, longS) = a.Length <= b.Length ? (a, b) : (b, a);
         var contain = shortS.Length >= 4 && longS.Contains(shortS) ? 0.6 + 0.4 * shortS.Length / longS.Length : 0;
         // Names often differ only by a vendor prefix ("FabFilter Pro-Q 3" vs "Pro-Q 4"):
         // compare the shorter name with the end of the longer one.
         var tail = shortS.Length >= 4
-            ? 0.9 * (1.0 - (double)Levenshtein(shortS, longS[^shortS.Length..]) / shortS.Length)
+            ? 0.9 * (1.0 - (double)Levenshtein(shortS, longS.AsSpan(longS.Length - shortS.Length)) / shortS.Length)
             : 0;
         return Math.Max(edit, Math.Max(contain, tail));
     }
 
-    static int Levenshtein(string a, string b)
+    static int Levenshtein(ReadOnlySpan<char> a, ReadOnlySpan<char> b)
     {
-        var prev = new int[b.Length + 1];
-        var cur = new int[b.Length + 1];
+        // On the stack for names (nearly all), so comparing with every indexed file makes no garbage.
+        Span<int> prev = b.Length < 256 ? stackalloc int[b.Length + 1] : new int[b.Length + 1];
+        Span<int> cur = b.Length < 256 ? stackalloc int[b.Length + 1] : new int[b.Length + 1];
         for (var j = 0; j <= b.Length; j++) prev[j] = j;
         for (var i = 1; i <= a.Length; i++)
         {
             cur[0] = i;
             for (var j = 1; j <= b.Length; j++)
                 cur[j] = Math.Min(Math.Min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1));
-            (prev, cur) = (cur, prev);
+            var swap = prev;
+            prev = cur;
+            cur = swap;
         }
         return prev[b.Length];
     }

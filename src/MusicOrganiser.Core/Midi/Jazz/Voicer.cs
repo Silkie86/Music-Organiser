@@ -60,17 +60,20 @@ public static class Voicer
     const int Ppq = PhraseAnalyser.Ppq, Beat = Ppq, Bar = 4 * Ppq;
 
     /// <summary>
-    /// Each chord held for as long as it lasts, its root low and just its own notes above, nothing added: chords that
-    /// are heard back as exactly the chords they are (a chord part to start from, or new chords put on one).
+    /// Each chord held for as long as it lasts, its bass low (the root, or a slash chord's bass) and just its own notes
+    /// above, nothing added: chords that are heard back as exactly the chords they are (a chord part to start from, or
+    /// new chords put on one).
     /// </summary>
     public static List<NoteEvent> Plain(IReadOnlyList<TimedChord> lane, int velocity = 90)
     {
         var notes = new List<NoteEvent>();
         foreach (var c in lane)
         {
-            notes.Add(new NoteEvent(c.Start, c.Length, 36 + c.Chord.Root, velocity));
+            notes.Add(new NoteEvent(c.Start, c.Length, 36 + c.Chord.Bass, velocity));
+            // A bass that's only a bass (the C of D/C) stays out of the notes above, or D/C would be heard as D7.
+            var upper = PhraseChord.Of(c.Chord).Mask;
             for (var p = 0; p < 12; p++)
-                if ((c.Chord.Mask >> p & 1) != 0) notes.Add(new NoteEvent(c.Start, c.Length, 52 + ChordSymbol.Mod(p - 4), velocity));
+                if ((upper >> p & 1) != 0) notes.Add(new NoteEvent(c.Start, c.Length, 52 + ChordSymbol.Mod(p - 4), velocity));
         }
         return notes;
     }

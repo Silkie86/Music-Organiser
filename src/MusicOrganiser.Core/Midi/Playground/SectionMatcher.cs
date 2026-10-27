@@ -359,7 +359,7 @@ public static class SectionFit
     public static double[] Onsets(IEnumerable<NoteEvent> notes)
     {
         var grid = new double[16];
-        foreach (var n in notes) grid[(int)(n.Start % Bar * 16 / Bar)] += n.Velocity / 127.0;
+        foreach (var n in notes) grid[(int)((n.Start % Bar + Bar) % Bar * 16 / Bar)] += n.Velocity / 127.0;
         var max = grid.Max();
         if (max > 0) for (var i = 0; i < 16; i++) grid[i] /= max;
         return grid;

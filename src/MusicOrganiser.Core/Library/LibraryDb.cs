@@ -51,6 +51,11 @@ public sealed partial class LibraryDb : IDisposable
         CREATE INDEX IF NOT EXISTS ix_projects_folder ON projects(folder);
         """;
 
+    // Indexes this version added, which take a few seconds to build over a big library the first time (see BuildNewIndexes).
+    const string NewIndexes = """
+        CREATE INDEX IF NOT EXISTS ix_samples_path ON samples(path COLLATE NOCASE);
+        """;
+
     readonly SqliteConnection _conn;
     readonly object _lock = new();
     // Reads get connections of their own (the database is in WAL mode, so they never wait for a write): a page reading
@@ -93,6 +98,17 @@ public sealed partial class LibraryDb : IDisposable
         AddColumn("projects", "length_bars", "INTEGER");
         AddColumn("projects", "track_count", "INTEGER");
         AddColumn("samples", "unplayed", "INTEGER NOT NULL DEFAULT 0");
+    }
+
+    /// <summary>
+    /// Builds the indexes this version added, if the library doesn't have them yet. The app calls it in the
+    /// background once the window shows: the first time, over every sample of 16,000 projects, it takes a few seconds,
+    /// which would otherwise pass with nothing on screen. Until then the lookups they speed up still work, just slower.
+    /// </summary>
+    public void BuildNewIndexes()
+    {
+        lock (_lock)
+            if (!_disposed) Exec(NewIndexes);
     }
 
     /// <summary>A column added after the first release: libraries made before it get it here.</summary>
@@ -198,20 +214,17 @@ public sealed partial class LibraryDb : IDisposable
     public void SetList(string key, IEnumerable<string> values) => SetSetting(key, JsonSerializer.Serialize(values.ToList()));
 
     /// <summary>Your changes to which saves are one song (see <see cref="Library.SongChoices"/>).</summary>
-    public SongChoices SongChoices() => _songChoices ??= ReadSongChoices(null);
+    public SongChoices SongChoices() => _songChoices ??= ReadSongChoices();
 
     // Kept until you change them, since a scan asks for every new save.
     volatile SongChoices? _songChoices;
 
-    SongChoices ReadSongChoices(SqliteTransaction? tx)
+    // Read like any other query: on a reader connection of its own, or inside a write on this thread on the write
+    // connection (which sees the write's rows). Read on the write connection from another thread, it ran in the middle
+    // of a scan's open save, and could fail or see rows not saved yet.
+    SongChoices ReadSongChoices()
     {
-        var rows = new List<(string Kind, string A, string B)>();
-        using (var cmd = Cmd("SELECT kind, a, b FROM song_choices"))
-        {
-            cmd.Transaction = tx;
-            using var r = cmd.ExecuteReader();
-            while (r.Read()) rows.Add((Str(r, "kind"), Str(r, "a"), Str(r, "b")));
-        }
+        var rows = Query("SELECT kind, a, b FROM song_choices", r => (Kind: Str(r, "kind"), A: Str(r, "a"), B: Str(r, "b")));
         return new SongChoices(rows.Where(r => r.Kind == "join").ToDictionary(r => r.A, r => r.B),
                                rows.Where(r => r.Kind == "split").Select(r => r.A).ToList(),
                                rows.Where(r => r.Kind == "apart").Select(r => r.A).ToList());
@@ -264,10 +277,12 @@ public sealed partial class LibraryDb : IDisposable
 
     /// <remarks>
     /// A project read before the app knew its key, notes and length counts as changed, so the next scan reads it again.
+    /// So does one marked missing: its file back as it was (put back from the Recycle Bin, or moved out and back) is
+    /// read again and no longer shows as moved.
     /// </remarks>
     public Dictionary<string, (long Mtime, long Size)> KnownFiles() =>
-        Query("SELECT path, mtime, size, (detected_key IS NULL OR note_count IS NULL) AS unkeyed FROM projects",
-              r => (Path: (string)r["path"], Mtime: Long(r, "unkeyed") == 1 ? -1 : Long(r, "mtime"), Size: Long(r, "size")))
+        Query("SELECT path, mtime, size, (detected_key IS NULL OR note_count IS NULL OR file_missing = 1) AS reread FROM projects",
+              r => (Path: (string)r["path"], Mtime: Long(r, "reread") == 1 ? -1 : Long(r, "mtime"), Size: Long(r, "size")))
             .ToDictionary(x => x.Path, x => (x.Mtime, x.Size), StringComparer.OrdinalIgnoreCase);
 
     public sealed record IndexedFile(string Path, long Size, long Mtime, ProjectInfo? Info, string? Error,
@@ -284,20 +299,40 @@ public sealed partial class LibraryDb : IDisposable
     public void Upsert(IndexedFile f) => UpsertMany([f]);
 
     /// <summary>Saves several scanned projects in one transaction.</summary>
-    public void UpsertMany(IReadOnlyCollection<IndexedFile> files)
+    public void UpsertMany(IReadOnlyCollection<IndexedFile> files) => UpsertMany(files, inRoots: false);
+
+    /// <summary>
+    /// Saves what a scan read, leaving out any project no longer inside a project folder: one taken out of Settings while
+    /// the scan was still reading it. The folders are looked at inside the save, so projects taken off the list with
+    /// their folder never come back from a scan that started before.
+    /// </summary>
+    /// <param name="gone">
+    /// The projects the scan didn't find, not marked missing yet (see <see cref="GoneFiles"/>): a new file can be one of
+    /// them moved, as it can one marked missing. One found is taken off.
+    /// </param>
+    public void UpsertInRoots(IReadOnlyCollection<IndexedFile> files, HashSet<long>? gone = null) => UpsertMany(files, inRoots: true, gone);
+
+    void UpsertMany(IReadOnlyCollection<IndexedFile> files, bool inRoots, HashSet<long>? gone = null)
     {
         if (files.Count == 0) return;
         var installed = InstalledKeys();
+        var saved = 0;
         lock (_lock)
         {
+            var roots = inRoots ? Roots() : [];
             using var tx = _conn.BeginTransaction();
-            foreach (var f in files) Upsert(tx, f, installed);
+            foreach (var f in files)
+            {
+                if (inRoots && !roots.Any(r => Space.DiskSpace.IsInside(f.Path, r))) continue;
+                Upsert(tx, f, installed, gone);
+                saved++;
+            }
             tx.Commit();
         }
-        ProjectsChanged();
+        if (saved > 0) ProjectsChanged();
     }
 
-    void Upsert(SqliteTransaction tx, IndexedFile f, HashSet<string> installed)
+    void Upsert(SqliteTransaction tx, IndexedFile f, HashSet<string> installed, HashSet<long>? gone = null)
     {
         var info = f.Info;
         bool isNew;
@@ -305,6 +340,17 @@ public sealed partial class LibraryDb : IDisposable
         {
             cmd.Transaction = tx;
             isNew = (long)cmd.ExecuteScalar()! == 0;
+        }
+        var daw = info?.Daw ?? Readers.For(f.Path)?.Daw ?? "Unknown";
+        if (isNew && MovedFrom(tx, f, daw, gone) is { } moved)
+        {
+            // The same file moved here (its song folder renamed or moved): it carries on as that project, with your
+            // status, rating, notes and tags, rather than starting blank beside a "file moved" copy of itself.
+            using var cmd = Cmd("UPDATE projects SET path = $p WHERE id = $id", ("$p", f.Path), ("$id", moved));
+            cmd.Transaction = tx;
+            cmd.ExecuteNonQuery();
+            gone?.Remove(moved);
+            isNew = false;
         }
         var infoJson = info is null ? "{}" : JsonSerializer.Serialize(new StoredInfo(info.Tracks, info.Details, info.Warnings));
         using (var cmd = Cmd("""
@@ -321,7 +367,7 @@ public sealed partial class LibraryDb : IDisposable
                 note_count=excluded.note_count, length_bars=excluded.length_bars, track_count=excluded.track_count
             """,
             ("$path", f.Path), ("$name", Path.GetFileNameWithoutExtension(f.Path)),
-            ("$daw", info?.Daw ?? Readers.For(f.Path)?.Daw ?? "Unknown"), ("$folder", Path.GetDirectoryName(f.Path)),
+            ("$daw", daw), ("$folder", Path.GetDirectoryName(f.Path)),
             ("$size", f.Size), ("$mtime", f.Mtime), ("$tempo", info?.Tempo), ("$version", info?.Version),
             ("$title", info?.Title), ("$conf", (int)(info?.Confidence ?? Confidence.Catalogue)),
             ("$midi", info?.CanExtractMidi == true ? 1 : 0), ("$presets", info?.CanExtractPresets == true ? 1 : 0),
@@ -371,6 +417,25 @@ public sealed partial class LibraryDb : IDisposable
     }
 
     /// <summary>
+    /// The project marked missing that this new file is, moved: the one missing project (or one the scan didn't find,
+    /// <paramref name="gone"/>) of the same DAW with the same file name, size and modified time (a move keeps those).
+    /// Null when there's none, or more than one to choose from.
+    /// </summary>
+    long? MovedFrom(SqliteTransaction tx, IndexedFile f, string daw, IReadOnlySet<long>? gone)
+    {
+        using var cmd = Cmd("""
+            SELECT id, file_missing FROM projects
+            WHERE daw = $daw AND name = $name COLLATE NOCASE AND size = $size AND mtime = $mtime
+            """, ("$daw", daw), ("$name", Path.GetFileNameWithoutExtension(f.Path)), ("$size", f.Size), ("$mtime", f.Mtime));
+        cmd.Transaction = tx;
+        var ids = new List<long>();
+        using (var r = cmd.ExecuteReader())
+            while (r.Read())
+                if (r.GetInt64(1) == 1 || gone?.Contains(r.GetInt64(0)) == true) ids.Add(r.GetInt64(0));
+        return ids.Count == 1 ? ids[0] : null;
+    }
+
+    /// <summary>
     /// A new save of a song (Song_12 next to Song_11, or a Bitwig bored_58 in a folder of its own next to bored_57) takes
     /// over the status, rating, notes and tags you gave the song, so they stay with it as it moves on. It finds the song the
     /// way the Projects list groups it (<see cref="SongVersions.Key"/> and your <see cref="Library.SongChoices"/>), and copies
@@ -383,7 +448,7 @@ public sealed partial class LibraryDb : IDisposable
         var folder = Path.GetDirectoryName(path) ?? "";
         var daw = Readers.For(path)?.Daw;
         if (daw is null) return;
-        var choices = _songChoices ??= ReadSongChoices(tx);
+        var choices = SongChoices();
         var song = choices.KeyOf(path, folder, daw, name);
         // The song's saves sit in its folder, or in folders of their own inside it (Bitwig's): the folder's index finds them.
         var root = SongVersions.SongFolder(folder, name);
@@ -447,17 +512,43 @@ public sealed partial class LibraryDb : IDisposable
 
     /// <summary>
     /// Flags projects under your folders that the scan didn't find. Ones the scan now leaves out on
-    /// purpose (<paramref name="ignored"/>, such as autosave copies) are dropped from the library instead.
+    /// purpose (<paramref name="ignored"/>, such as autosave copies) are dropped from the library instead. Ones in a
+    /// folder the scan couldn't read this time (<paramref name="unreadable"/>) are left as they were.
     /// </summary>
-    public void MarkMissingFiles(IReadOnlySet<string> present, IReadOnlyList<string> roots, Func<string, bool>? ignored = null)
+    public void MarkMissingFiles(IReadOnlySet<string> present, IReadOnlyList<string> roots, Func<string, bool>? ignored = null,
+                                 IEnumerable<string>? unreadable = null)
     {
+        var (gone, dropped) = Unfound(present, roots, ignored, unreadable);
+        // A batch of commits rather than one for each of thousands of files.
+        InBatches(dropped, "DELETE FROM projects WHERE id = $id", ["$id"], (id, p) => p[0].Value = id);
+        InBatches(gone, "UPDATE projects SET file_missing = 1 WHERE id = $id", ["$id"], (id, p) => p[0].Value = id);
+        if (dropped.Count + gone.Count > 0) ProjectsChanged();
+    }
+
+    /// <summary>
+    /// The projects <see cref="MarkMissingFiles"/> would mark missing, left as they are. A scan marks them only once it has
+    /// read every project, so one stopped part way changes nothing, and saves what it reads with them meanwhile (see
+    /// <see cref="UpsertInRoots"/>), so a song folder renamed or moved is still found as the projects it was.
+    /// </summary>
+    public HashSet<long> GoneFiles(IReadOnlySet<string> present, IReadOnlyList<string> roots, Func<string, bool>? ignored = null,
+                                   IEnumerable<string>? unreadable = null) =>
+        Unfound(present, roots, ignored, unreadable).Gone.ToHashSet();
+
+    (List<long> Gone, List<long> Dropped) Unfound(IReadOnlySet<string> present, IReadOnlyList<string> roots, Func<string, bool>? ignored,
+                                                  IEnumerable<string>? unreadable)
+    {
+        var unread = unreadable?.ToList() ?? [];
         var rows = Query("SELECT id, path FROM projects WHERE file_missing = 0", r => (Id: (long)r["id"], Path: (string)r["path"]));
+        var gone = new List<long>();
+        var dropped = new List<long>();
         foreach (var (id, path) in rows)
         {
-            if (present.Contains(path) || !roots.Any(root => path.StartsWith(root, StringComparison.OrdinalIgnoreCase))) continue;
-            if (ignored?.Invoke(path) == true) RemoveProject(id);
-            else if (Exec("UPDATE projects SET file_missing = 1 WHERE id = $id", ("$id", id)) > 0) ProjectsChanged();
+            // Inside a root, not just starting with its name: "K:\Music Old" isn't in "K:\Music".
+            if (present.Contains(path) || !roots.Any(root => Space.DiskSpace.IsInside(path, root)) ||
+                unread.Any(folder => Space.DiskSpace.IsInside(path, folder))) continue;
+            (ignored?.Invoke(path) == true ? dropped : gone).Add(id);
         }
+        return (gone, dropped);
     }
 
     /// <summary>A project file that has gone (deleted, or moved out of your folders): it stays listed, marked missing.</summary>
@@ -476,6 +567,23 @@ public sealed partial class LibraryDb : IDisposable
     public void RemoveProject(string path)
     {
         if (Exec("DELETE FROM projects WHERE path = $p", ("$p", path)) > 0) ProjectsChanged();
+    }
+
+    /// <summary>
+    /// The projects in <paramref name="folder"/> that none of <paramref name="roots"/> holds: what a project folder taken
+    /// out of Settings leaves listed (a scan only looks inside the folders it has).
+    /// </summary>
+    public IReadOnlyList<long> ProjectsOnlyIn(string folder, IReadOnlyList<string> roots) =>
+        Query("SELECT id, path FROM projects", r => (Id: (long)r["id"], Path: Str(r, "path")))
+            .Where(p => Space.DiskSpace.IsInside(p.Path, folder) && !roots.Any(root => Space.DiskSpace.IsInside(p.Path, root)))
+            .Select(p => p.Id).ToList();
+
+    /// <summary>Takes these projects out of the library, with what you gave them. Their files aren't touched.</summary>
+    public void RemoveProjects(IReadOnlyCollection<long> ids)
+    {
+        if (ids.Count == 0) return;
+        InBatches(ids, "DELETE FROM projects WHERE id = $id", ["$id"], (id, p) => p[0].Value = id);
+        ProjectsChanged();
     }
 
     // ---- installed plugins & sample index ----------------------------------------------
@@ -592,8 +700,23 @@ public sealed partial class LibraryDb : IDisposable
 
     public int SampleIndexCount() => Query("SELECT COUNT(*) AS n FROM sample_index", r => (int)(long)r["n"]).First();
 
-    public IReadOnlyList<(string Path, string StemKey)> SampleIndex() =>
-        Query("SELECT path, stem_key FROM sample_index", r => ((string)r["path"], Str(r, "stem_key")));
+    /// <summary>Every file in the sample index with its name's key. Don't change the list: the same one is handed out again.</summary>
+    /// <remarks>
+    /// The last list read is kept while the sample folders haven't changed (<see cref="SampleIndexRevision"/>), and only
+    /// as long as memory allows: Fix asks for it once per missing sample, and reading 350,000 rows each time held its
+    /// plan up for tens of seconds.
+    /// </remarks>
+    public IReadOnlyList<(string Path, string StemKey)> SampleIndex()
+    {
+        var revision = SampleIndexRevision;
+        if (_sampleIndexRead is { } last && last.Revision == revision && last.List.TryGetTarget(out var kept)) return kept;
+        var list = Query("SELECT path, stem_key FROM sample_index", r => ((string)r["path"], Str(r, "stem_key")));
+        _sampleIndexRead = new(revision, new(list));
+        return list;
+    }
+
+    sealed record SampleIndexRead(long Revision, WeakReference<IReadOnlyList<(string Path, string StemKey)>> List);
+    volatile SampleIndexRead? _sampleIndexRead;
 
     public IReadOnlyList<string> SamplesNamed(string fileName) =>
         Query("SELECT path FROM sample_index WHERE file_name = $n", r => (string)r["path"], ("$n", fileName));
@@ -732,18 +855,38 @@ public sealed partial class LibraryDb : IDisposable
         }
     }
 
-    public void SetTags(long id, IEnumerable<string> tags)
+    public void SetTags(long id, IEnumerable<string> tags) => SetTags(id, tags, []);
+
+    /// <summary>
+    /// A song's tags, set on its newest save (<paramref name="id"/>). The tags this adds or takes off are added to or taken
+    /// off each of its <paramref name="otherSaves"/> too, so a tag taken off the song doesn't stay on its older saves (and
+    /// in the Tag filter). An older save's other tags are left alone.
+    /// </summary>
+    public void SetTags(long id, IEnumerable<string> tags, IEnumerable<long> otherSaves)
     {
         var clean = tags.Select(t => t.Trim().ToLowerInvariant()).Where(t => t.Length > 0).Distinct().ToList();
         lock (_lock)
         {
             using var tx = _conn.BeginTransaction();
-            using (var del = Cmd("DELETE FROM tags WHERE project_id = $id", ("$id", id))) { del.Transaction = tx; del.ExecuteNonQuery(); }
-            foreach (var t in clean)
+            void Run(string sql, long project, string? tag = null)
             {
-                using var cmd = Cmd("INSERT INTO tags VALUES ($id, $t)", ("$id", id), ("$t", t));
+                using var cmd = tag is null ? Cmd(sql, ("$id", project)) : Cmd(sql, ("$id", project), ("$t", tag));
                 cmd.Transaction = tx;
                 cmd.ExecuteNonQuery();
+            }
+            var had = new List<string>();
+            using (var read = Cmd("SELECT tag FROM tags WHERE project_id = $id", ("$id", id)))
+            {
+                read.Transaction = tx;
+                using var r = read.ExecuteReader();
+                while (r.Read()) had.Add(Str(r, "tag"));
+            }
+            Run("DELETE FROM tags WHERE project_id = $id", id);
+            foreach (var t in clean) Run("INSERT INTO tags VALUES ($id, $t)", id, t);
+            foreach (var other in otherSaves.Where(o => o != id).Distinct())
+            {
+                foreach (var t in had.Except(clean)) Run("DELETE FROM tags WHERE project_id = $id AND tag = $t", other, t);
+                foreach (var t in clean.Except(had)) Run("INSERT OR IGNORE INTO tags VALUES ($id, $t)", other, t);
             }
             tx.Commit();
         }
@@ -862,6 +1005,16 @@ public sealed partial class LibraryDb : IDisposable
 
     public IReadOnlyList<long> ProjectsUsingSample(string path) =>
         Query("SELECT DISTINCT project_id FROM samples WHERE path = $p COLLATE NOCASE", r => (long)r["project_id"], ("$p", path));
+
+    /// <summary>
+    /// Projects using a sample by its file name, wherever their copy of it is (Bitwig's collected copies, a relative
+    /// path): Sound Lab counts a sound by its name when no project has it at its own path and no other sound shares it.
+    /// </summary>
+    public IReadOnlyList<long> ProjectsUsingSampleNamed(string fileName) => fileName.Length == 0 ? [] : Query("""
+        SELECT DISTINCT project_id FROM samples
+        WHERE substr(path, -length($n)) = $n COLLATE NOCASE
+          AND (length(path) = length($n) OR substr(path, -length($n) - 1, 1) IN ('\', '/'))
+        """, r => (long)r["project_id"], ("$n", fileName));
 }
 
 /// <summary>Which projects count as using a sound (Settings › Sounds), for projects whose reader can tell (FL Studio so far).</summary>

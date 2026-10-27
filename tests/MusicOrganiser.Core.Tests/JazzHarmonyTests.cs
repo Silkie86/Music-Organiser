@@ -65,8 +65,20 @@ public class JazzHarmonyTests
     [InlineData("Dm9")] [InlineData("G13")] [InlineData("Cmaj9")] [InlineData("A7alt")] [InlineData("Bm7b5")]
     [InlineData("C#dim7")] [InlineData("C6/9")] [InlineData("F#m11")] [InlineData("Ab13(#11)")] [InlineData("G9sus4")]
     [InlineData("Bbmaj7/D")] [InlineData("Cm(maj7)")] [InlineData("E7(b9)")] [InlineData("Db7(#9)")]
+    [InlineData("Adim(maj7)")] [InlineData("C#dim7(maj7)/E")]
     public void A_typed_chord_reads_back_to_the_same_name(string name) =>
         Assert.Equal(name, ChordSymbol.Parse(name)!.Value.Name);
+
+    [Fact]
+    public void Every_chord_name_the_app_writes_can_be_typed_back()
+    {
+        // Every set of three or more notes on a root, named as the app names it (the chord lane, the chart box).
+        var unread = new List<string>();
+        for (var iv = 1; iv < 1 << 12; iv += 2)
+            if (ChordSymbol.Count(iv) >= 3 && ChordSpeller.QualityOf(iv, ChordSpeller.FamilyOf(iv)) is var q && ChordSpeller.IntervalsOf(q) is null)
+                unread.Add("C" + q);
+        Assert.Empty(unread.Distinct());
+    }
 
     [Theory]
     [InlineData("CΔ9", "Cmaj9")] [InlineData("D-7", "Dm7")] [InlineData("Bø", "Bm7b5")] [InlineData("C°7", "Cdim7")]
@@ -154,6 +166,15 @@ public class JazzHarmonyTests
         Assert.Equal("Dm9 G13 | Cmaj9 | % | A7alt", ChordLane.ToChart(lane, 4 * Bar));
         Assert.Null(ChordLane.ParseChart("Dm9 Hello", out why));
         Assert.Contains("Hello", why);
+    }
+
+    [Fact]
+    public void A_bar_of_five_or_seven_chords_still_ends_on_the_bar_line()
+    {
+        var lane = ChordLane.ParseChart("C D E F G | A | B C D E F G A | C", out _)!;
+        Assert.Equal(Bar, lane.Single(c => c.Chord.Name == "A" && c.Start < 2 * Bar).Start);
+        Assert.Equal(3L * Bar, lane[^1].Start);
+        Assert.All(lane.Zip(lane.Skip(1)), p => Assert.Equal(p.First.End, p.Second.Start));   // no gaps between them
     }
 
     [Fact]

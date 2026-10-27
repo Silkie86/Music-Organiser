@@ -137,18 +137,85 @@ public sealed partial class LibraryDb
     }
 
     /// <summary>
+    /// Which of these file names ("take 2.wav") any project's samples have. Projects store paths as they were on the PC
+    /// that saved them, so only the name is compared. Reads the whole samples table once (call it in the background).
+    /// </summary>
+    public HashSet<string> SampleNamesUsed(IReadOnlyCollection<string> names)
+    {
+        var wanted = names.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (wanted.Count == 0) return used;
+        Query("SELECT path FROM samples", r =>
+        {
+            var path = Str(r, "path");
+            if (path[(path.LastIndexOfAny(['\\', '/']) + 1)..] is var name && wanted.Contains(name)) used.Add(name);
+            return 0;
+        });
+        return used;
+    }
+
+    /// <summary>The FL Studio projects with one of these names (the file's name without .flp), anywhere in the library.</summary>
+    public IReadOnlyList<string> FlProjectsNamed(IEnumerable<string> names) =>
+        names.Distinct(StringComparer.OrdinalIgnoreCase)
+             .SelectMany(n => Query("SELECT path FROM projects WHERE name = $n COLLATE NOCASE AND path LIKE '%.flp'", r => Str(r, "path"), ("$n", n)))
+             .ToList();
+
+    /// <summary>
     /// A sample some project uses that's inside this folder, if any: Clean up never removes a folder holding one (your
     /// rule that samples are never moved or deleted; a plugin's library is only fair game when no project uses it).
     /// </summary>
+    /// <remarks>
+    /// The same folder under another drive letter counts too: a project saved when the drive was F: still finds its
+    /// samples now it's K: (see <see cref="SampleLocator"/>), so they hold the folder just the same.
+    /// </remarks>
     public string? SampleInside(string folder)
     {
         var f = folder.Replace('/', '\\').TrimEnd('\\');
         var g = folder.Replace('\\', '/').TrimEnd('/');
+        var drive = f.Length >= 2 && f[1] == ':' && char.IsAsciiLetter(f[0]);
+        string Pattern(string path) => drive ? "_:" + Like(path[2..]) : Like(path);   // "_" stands for any one letter
         return Query("""
             SELECT path FROM samples WHERE path LIKE $a ESCAPE '|' OR path LIKE $b ESCAPE '|' LIMIT 1
-            """, r => Str(r, "path"), ("$a", Like(f) + "\\%"), ("$b", Like(g) + "/%")).FirstOrDefault();
+            """, r => Str(r, "path"), ("$a", Pattern(f) + "\\%"), ("$b", Pattern(g) + "/%")).FirstOrDefault();
 
         static string Like(string s) => s.Replace("|", "||").Replace("%", "|%").Replace("_", "|_");
+    }
+
+    /// <summary>
+    /// For each folder that holds one, a sample some project uses whose file is in it under another path: a file of the
+    /// same name, in a folder of the same name. Projects store paths as they were on the PC that saved them
+    /// ("C:\Users\OldPC\…", a drive with another letter), so a sample found here since doesn't start with the folder's
+    /// path (see <see cref="SampleInside"/>). Walks the folders and reads the samples table once: call it in the background.
+    /// A OneDrive file that's only online here counts too: it's still the sample, and removing the folder would remove it.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> SamplesNamedIn(IReadOnlyList<string> folders, CancellationToken ct = default)
+    {
+        // "Kicks/kick 1.wav" → the folders holding it.
+        var tails = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var folder in folders.Where(Directory.Exists))
+        {
+            var n = 0;
+            foreach (var file in DiskSpace.AllFiles(folder, (ref System.IO.Enumeration.FileSystemEntry e) => e.ToFullPath()))
+            {
+                if ((++n & 1023) == 0) ct.ThrowIfCancellationRequested();
+                if (DiskSpace.IsSound(file, 0) && Tail(file) is { } tail) (tails.TryGetValue(tail, out var l) ? l : tails[tail] = []).Add(folder);
+            }
+        }
+        var found = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (tails.Count == 0) return found;
+        var rows = 0;
+        Query("SELECT path FROM samples", r =>
+        {
+            if ((++rows & 4095) == 0) ct.ThrowIfCancellationRequested();
+            var path = Str(r, "path");
+            if (Tail(path) is { } tail && tails.TryGetValue(tail, out var holding))
+                foreach (var f in holding) found.TryAdd(f, path);
+            return 0;
+        });
+        return found;
+
+        static string? Tail(string path) =>
+            path.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries) is { Length: >= 2 } parts ? $"{parts[^2]}/{parts[^1]}" : null;
     }
 
     /// <summary>Each scanned plugin's maker, by name key, as the plugin scanner read it.</summary>

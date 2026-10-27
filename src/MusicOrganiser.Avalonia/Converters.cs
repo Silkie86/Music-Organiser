@@ -113,8 +113,16 @@ public sealed class IndexToBool : IValueConverter
 /// <summary>A length in seconds, short: "0.4s", "12s", "1:05".</summary>
 public sealed class Seconds : IValueConverter
 {
-    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
-        value is double s ? s >= 60 ? $"{(int)s / 60}:{s % 60:00}" : s >= 10 ? $"{s:0}s" : $"{s:0.0}s" : "";
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value is double s ? Format(s) : "";
+
+    // Rounded to what's shown before it's split up, so 119.6 s is "2:00", not "1:60", and 59.96 s is "1:00", not "60s".
+    static string Format(double s)
+    {
+        if (Math.Round(s, 1, MidpointRounding.AwayFromZero) is var tenths and < 10) return $"{tenths:0.0}s";
+        var whole = (int)Math.Round(s, MidpointRounding.AwayFromZero);
+        return whole < 60 ? $"{whole}s" : $"{whole / 60}:{whole % 60:00}";
+    }
+
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }
 

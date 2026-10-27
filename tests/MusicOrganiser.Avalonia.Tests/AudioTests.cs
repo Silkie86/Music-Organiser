@@ -123,6 +123,27 @@ public sealed class AudioTests : IDisposable
     }
 
     [Fact]
+    public void A_mu_law_wav_streams_on_windows_rather_than_being_decoded_whole_first()
+    {
+        // Review: a WAV only Windows' codecs read was decoded whole (up to 10 minutes) on the window's thread to play it.
+        if (!OperatingSystem.IsWindows()) return;   // Windows' codecs
+        var path = Path.Combine(_dir, "mulaw.wav");
+        using (var writer = new WaveFileWriter(path, WaveFormat.CreateMuLawFormat(8000, 1)))
+            for (var n = 0; n < 16000; n++) writer.WriteByte(NAudio.Codecs.MuLawEncoder.LinearToMuLawSample((short)(Sample(n, 0) * 32767)));
+        try { WaveFormatConversionStream.CreatePcmStream(new WaveFileReader(path)).Dispose(); }
+        catch (NAudio.MmException) { return; }   // this Windows has no µ-law codec, so nothing could play it
+        using var source = PcmSource.Open(path, 600);
+        var buffer = new float[2];
+
+        source.SeekTo(1.5);
+        source.Read(buffer);
+
+        Assert.IsType<StreamSource>(source);
+        Assert.Equal(8000, source.SampleRate);
+        Assert.Equal(Sample(12000, 0), buffer[0], 1);
+    }
+
+    [Fact]
     public void A_64_bit_float_wav_streams()
     {
         var path = Path.Combine(_dir, "double.wav");

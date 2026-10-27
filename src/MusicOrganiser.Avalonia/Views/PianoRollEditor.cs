@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Threading;
 using MusicOrganiser.Core.Midi;
 using MusicOrganiser.Core.Midi.Jazz;
 using MusicOrganiser.Core.Parsers;
@@ -144,6 +145,26 @@ public sealed class PianoRollEditor : Control
     int _lastVelocity = 100;
     double? _newAt;   // where a note being put in was clicked, until it's dragged longer
     (long Tick, int Key)? _hover;
+    // The spot the pointer has rested on, where the note a click would put down is coloured as it would be (WouldBe hears
+    // the whole idea again with the note in, too slow for every spot the pointer crosses); until then, as it fits now.
+    (long Tick, int Key)? _rested;
+    DispatcherTimer? _rest;
+
+    void Hover((long Tick, int Key)? at)
+    {
+        if (at == _hover) return;
+        _hover = at;
+        _rested = null;
+        _rest?.Stop();
+        if (at is null || WouldBe is null) return;
+        _rest ??= new DispatcherTimer(TimeSpan.FromMilliseconds(120), DispatcherPriority.Background, (_, _) =>
+        {
+            _rest!.Stop();
+            _rested = _hover;
+            InvalidateVisual();
+        });
+        _rest.Start();
+    }
 
     IReadOnlyList<NoteEvent> Current => _working ?? Notes ?? [];
     long Shown => Math.Max(Math.Max(1, Length), Math.Max(1, Period));
@@ -382,7 +403,7 @@ public sealed class PianoRollEditor : Control
         if (_working is null || _index < 0)
         {
             var onRuler = p.Y <= Ruler && p.X > Keys;
-            _hover = p.X > Keys && p.Y > Ruler ? (TickAt(p.X, snap), KeyAt(p.Y, low, high)) : null;
+            Hover(p.X > Keys && p.Y > Ruler ? (TickAt(p.X, snap), KeyAt(p.Y, low, high)) : null);
             Cursor = onRuler ? new Cursor(Section is { } s && (Math.Abs(p.X - X(s.Start)) <= 6 || Math.Abs(p.X - X(s.End)) <= 6)
                                               ? StandardCursorType.SizeWestEast : StandardCursorType.Hand)
                    : HitTest(p, out var end) >= 0 ? new Cursor(end ? StandardCursorType.SizeWestEast : StandardCursorType.SizeAll) : null;
@@ -446,6 +467,15 @@ public sealed class PianoRollEditor : Control
     {
         base.OnPointerCaptureLost(e);
         _panFrom = null;   // an interrupted pan (Alt+Tab, a dialog) mustn't carry on when the pointer next moves
+        // So mustn't a note or loop points being dragged: they go back to where they were, and nothing is changed.
+        if (_working is null && _edge == Edge.None) return;
+        _working = null;
+        _index = -1;
+        _drag = Drag.None;
+        _newAt = null;
+        _edge = Edge.None;
+        _draft = null;
+        InvalidateVisual();
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -458,10 +488,10 @@ public sealed class PianoRollEditor : Control
         }
         if (_edge != Edge.None)
         {
-            e.Pointer.Capture(null);
             var draft = _draft;
             _edge = Edge.None;
             _draft = null;
+            e.Pointer.Capture(null);   // after the drag is taken, as letting go of the pointer ends it
             if (draft is { } range)
             {
                 if (SectionCommand?.CanExecute(range) == true) SectionCommand.Execute(range);
@@ -489,7 +519,7 @@ public sealed class PianoRollEditor : Control
 
     protected override void OnPointerExited(PointerEventArgs e)
     {
-        _hover = null;
+        Hover(null);
         InvalidateVisual();
     }
 
@@ -650,7 +680,7 @@ public sealed class PianoRollEditor : Control
             // and shaded as it will be, a little fainter.
             var length = Math.Min(_lastLength, Loop - ((hov.Tick - From) % Loop + Loop) % Loop);
             var ghost = new NoteEvent(hov.Tick, length, hov.Key, _lastVelocity);
-            var would = fit is null ? null : (WouldBe ?? StrengthOf)!(ghost);
+            var would = fit is null ? null : (WouldBe is { } later && _rested == hov ? later : StrengthOf)!(ghost);
             using (dc.PushOpacity(would is null ? 0.25 : 0.7 * (0.4 + 0.6 * Math.Clamp(_lastVelocity / 110.0, 0, 1))))
                 Note(dc, would is { } s ? fit![(int)s] : accent, null, hov.Tick, length, hov.Key, low, high);
         }

@@ -172,6 +172,9 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   each whether its panel showed before and after each go (`visible`), whether the route `ran` it, and whether
   the link put the panel back as it was (`restored`). A panel that shows and hides with them means Bitwig
   carried them out for the link.
+- From 3.18, a change still waiting behind others when its app closes the connection (it gave up waiting) isn't
+  made, so asking again doesn't make it twice (apart from `stoptracks`, which the app sends as it closes), and a
+  `replace` into an empty slot waits as long as any new clip.
 - From 3.17, `clip` with `launch` launches the clip in step with the song (synced), so a swapped part carries on
   with the others instead of starting again from its own start, and a `replace` waits for the clip's name to change
   (the app names each file it swaps in differently) rather than a fixed moment, before it launches.

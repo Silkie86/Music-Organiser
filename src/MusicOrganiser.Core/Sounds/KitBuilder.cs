@@ -113,14 +113,27 @@ public static class KitBuilder
 
     public sealed record ExportOptions(bool ElektronReady = false, bool Mono = false, bool Normalise = false);
 
+    /// <summary>An exported kit: its folder, and the pad files written into it, in pad order.</summary>
+    public sealed record Exported(string Folder, IReadOnlyList<string> Pads);
+
     /// <summary>
     /// Copies the kit into a new folder with numbered pad names. "Elektron ready"
     /// converts to 48 kHz 16-bit WAV for the Digitakt II / Analog Rytm via Elektron Transfer.
     /// </summary>
-    public static string Export(IList<KitSlot> slots, string parentFolder, string kitName, ExportOptions o)
+    public static string Export(IList<KitSlot> slots, string parentFolder, string kitName, ExportOptions o) =>
+        ExportPads(slots, parentFolder, kitName, o).Folder;
+
+    /// <summary>
+    /// <see cref="Export"/>, saying which pad files it wrote. A folder of the kit's name already there (a kit exported in
+    /// the same minute) is left as it is, since a DAW may be using its files: the new one gets a number after the name.
+    /// </summary>
+    public static Exported ExportPads(IList<KitSlot> slots, string parentFolder, string kitName, ExportOptions o)
     {
-        var folder = Path.Combine(parentFolder, Safe(kitName));
+        var name = Safe(kitName);
+        var folder = Path.Combine(parentFolder, name);
+        for (var i = 2; Directory.Exists(folder) || File.Exists(folder); i++) folder = Path.Combine(parentFolder, $"{name} ({i})");
         Directory.CreateDirectory(folder);
+        var pads = new List<string>();
         var lines = new List<string> { kitName, "" };
         var n = 0;
         foreach (var slot in slots)
@@ -132,6 +145,7 @@ public static class KitBuilder
             {
                 var target = Path.Combine(folder, baseName + Path.GetExtension(s.Path));
                 File.Copy(s.Path, target, overwrite: true);
+                pads.Add(target);
             }
             else
             {
@@ -148,12 +162,14 @@ public static class KitBuilder
                         foreach (var c in channels) for (var i = 0; i < c.Length; i++) c[i] *= g;
                     }
                 }
-                WavWriter.Write(Path.Combine(folder, baseName + ".wav"), channels, rate, 16);
+                var target = Path.Combine(folder, baseName + ".wav");
+                WavWriter.Write(target, channels, rate, 16);
+                pads.Add(target);
             }
             lines.Add($"{n:00} {slot.Name}: {s.Path}");
         }
         File.WriteAllLines(Path.Combine(folder, "kit.txt"), lines);
-        return folder;
+        return new(folder, pads);
     }
 
     static string Safe(string s) => string.Concat(s.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c is '/' or '\\' or ':' ? '-' : c)).Trim();

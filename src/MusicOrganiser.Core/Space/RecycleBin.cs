@@ -52,20 +52,23 @@ public static class RecycleBin
         return problems;
     }
 
-    /// <summary>The app started for <see cref="SendAsAdmin"/>: <c>--recycle-bin list result</c>.</summary>
+    /// <summary>The app started for <see cref="SendAsAdmin"/>: <c>--recycle-bin list result fingerprint</c>.</summary>
     public const string HelperFlag = "--recycle-bin";
 
     /// <summary>
     /// Runs the administrator step when the app was started for it: bins each path in the list file and writes
-    /// "path, tab, problem" lines to the result file. Returns false when the app wasn't started for this.
+    /// "path, tab, problem" lines to the result file. A list changed since the app wrote it (its fingerprint differs)
+    /// bins nothing. Returns false when the app wasn't started for this.
     /// </summary>
     public static bool RunHelper(string[] args)
     {
-        if (args.Length != 3 || args[0] != HelperFlag) return false;
+        if (args.Length == 0 || args[0] != HelperFlag) return false;
+        if (args.Length != 4) return true;   // not as the app starts it: nothing, and no window as administrator either
         try
         {
-            var lines = File.ReadAllLines(args[1]).Where(l => l.Length > 0).Select(p => $"{p}\t{Send(p)}");
-            File.WriteAllLines(args[2], lines);
+            if (AdminStep.ReadList(args[1], args[3]) is not { } paths) return true;
+            // Lazily: the result file is made first, so nothing is binned when it can't be.
+            AdminStep.WriteResult(args[2], paths.Select(p => $"{p}\t{Send(p)}"));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return true;
@@ -81,8 +84,8 @@ public static class RecycleBin
         var result = list + ".result";
         try
         {
-            File.WriteAllLines(list, paths);
-            var problem = AdminStep.Run(HelperFlag, list, result);
+            var fingerprint = AdminStep.WriteList(list, paths);
+            var problem = AdminStep.Run(HelperFlag, list, result, fingerprint);
             if (problem.Length > 0) return paths.Select(p => (p, problem));
             if (!File.Exists(result)) return paths.Select(p => (p, "The administrator step didn't finish."));
             var said = File.ReadAllLines(result).Select(l => l.Split('\t', 2)).Where(x => x.Length == 2)

@@ -104,10 +104,16 @@ public sealed partial class PluginsViewModel : ObservableObject
                          IReadOnlyList<MovedFolder> Moved, IReadOnlyList<MovedFolder> Lost, IReadOnlyList<MovedFolder> Replaced,
                          IReadOnlyList<OldHome> OldHomes);
 
-    Loaded Load() => new(_db.PluginUsage(), _db.InstalledNames(), _db.MissingPluginsByProject(), _db.PluginScanCounts(), _db.ParameterCounts(),
-                         _db.PluginSpaces(), _db.SpareCopyList().Where(c => File.Exists(c.Path) || Directory.Exists(c.Path)).ToList(),
-                         _db.MovedFolders().Where(m => m.HasOldCopy).ToList(), _db.MovedFolders(), FolderMove.Lost(_db.MovedFolders()), FolderMove.Replaced(_db.MovedFolders()),
-                         _db.OldHomes().Where(h => Directory.Exists(h.Path)).ToList());
+    Loaded Load()
+    {
+        var moved = _db.MovedFolders();
+        // Only old copies and old places that can go: not while the copy on the other drive can't be reached, nor while
+        // a link still points into an old place.
+        return new(_db.PluginUsage(), _db.InstalledNames(), _db.MissingPluginsByProject(), _db.PluginScanCounts(), _db.ParameterCounts(),
+                   _db.PluginSpaces(), _db.SpareCopyList().Where(c => File.Exists(c.Path) || Directory.Exists(c.Path)).ToList(),
+                   moved.Where(FolderMove.OldCopyCanGo).ToList(), moved, FolderMove.Lost(moved), FolderMove.Replaced(moved),
+                   _db.OldHomes().Where(h => FolderMove.OldHomeCanGo(h, moved)).ToList());
+    }
 
     /// <summary>What the page last read, so changing how many cards to show doesn't read the database again.</summary>
     Loaded? _loaded;

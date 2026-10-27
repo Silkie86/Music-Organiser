@@ -121,7 +121,7 @@ static class WindowsDecoders
     }
 
     /// <summary>A WAV as PCM: compressed ones are converted by Windows' codecs.</summary>
-    static WaveStream Pcm(WaveFileReader reader)
+    public static WaveStream Pcm(WaveFileReader reader)
     {
         if (reader.WaveFormat.Encoding is WaveFormatEncoding.Pcm or WaveFormatEncoding.IeeeFloat) return reader;
         try { return WaveFormatConversionStream.CreatePcmStream(reader); }

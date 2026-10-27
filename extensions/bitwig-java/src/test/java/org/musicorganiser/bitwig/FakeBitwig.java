@@ -1196,6 +1196,8 @@ final class FakeBitwig {
         double playStart;
         /** How long a launch, or Play, takes to start Bitwig playing, in ms (the record job looks every 25 ms). */
         long startDelay = 20;
+        /** How long Bitwig takes to make a clip from a file put in a launcher slot, in ms (longer from a cold disk). */
+        long clipDelay = 40;
         /** The panel with the focus at first: LAUNCHER, TIMELINE, or "" for another. */
         String focus = "";
         /**
@@ -2352,7 +2354,7 @@ final class FakeBitwig {
             return new Point("track " + track + " slot " + scene, (method, arg) -> {
                 if (!method.equals("insertFile") || !MIDI.matcher((String) arg).find()) return;
                 TrackSpec at = state.tracks.get(track);
-                later(40, () -> {
+                later(model.clipDelay, () -> {
                     while (at.slots.size() <= scene) at.slots.add(null);
                     at.slots.set(scene, (String) arg);
                     at.clipColours.remove(scene);   // a new clip, in its track's colour

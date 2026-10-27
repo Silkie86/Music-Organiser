@@ -102,4 +102,34 @@ public sealed class GalaxyTests
         Assert.Equal(before, Listeners());
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void An_arrow_key_hops_to_the_same_star_as_looking_at_every_star_would()
+    {
+        // Review: each arrow key looked at every star (357,000 of them) on the window's thread; now it looks near the
+        // picked star first. It must still land where looking at them all does: the nearest one that way, in a 45° cone.
+        var rng = new Random(7);
+        var stars = Enumerable.Range(0, 6000)
+            .Select(i => new GalaxyStar(new Sound { Id = i, Path = $"/lib/Star {i}.wav" },
+                                        i < 3000 ? (float)rng.NextDouble() : 0.4f + 0.05f * (float)rng.NextDouble(),
+                                        i < 3000 ? (float)rng.NextDouble() : 0.6f + 0.05f * (float)rng.NextDouble(), 0xFF8080FF, i % 5 != 0))
+            .ToList();
+        var canvas = new GalaxyCanvas { Stars = stars };
+        var window = new Window { Content = canvas, Width = 600, Height = 400 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        static GalaxyStar? EveryStar(List<GalaxyStar> all, GalaxyStar from, double dx, double dy) =>
+            all.Where(s => s.Shown && s != from)
+               .Select(s => (s, x: (double)s.X - from.X, y: (double)s.Y - from.Y))
+               .Where(t => t.x * dx + t.y * dy > Math.Abs(t.x * dy - t.y * dx))
+               .Select(t => (t.s, d: Math.Sqrt(t.x * t.x + t.y * t.y)))
+               .Select(t => (t.s, score: t.d * (1 + 0.6 * Math.Abs((t.s.X - from.X) * dy - (t.s.Y - from.Y) * dx) / Math.Max(1e-6, t.d))))
+               .OrderBy(t => t.score).Select(t => t.s).FirstOrDefault();
+
+        foreach (var from in stars.Where((_, i) => i % 23 == 0))
+            foreach (var (dx, dy) in new (double, double)[] { (-1, 0), (1, 0), (0, -1), (0, 1) })
+                Assert.Equal(EveryStar(stars, from, dx, dy)?.Sound.Id, canvas.NextStar(from, dx, dy)?.Sound.Id);
+        window.Close();
+    }
 }

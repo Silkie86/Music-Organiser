@@ -41,6 +41,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         _store = store ?? new PlaygroundStore(Path.Combine(main.DataFolder, "playground"));
         LoadOptions();
         _session = !quick && _store.HasCurrent ? _store.LoadCurrent() : Fresh();
+        if (_store.OpenFailed) _session = Fresh();
         RoleChips = new[] { MidiRoles.Chords, MidiRoles.Bass, MidiRoles.Melody, MidiRoles.Arp, MidiRoles.Drums }
             .Select(r => new RoleChip(MidiRoles.Plural(r), r)).ToList();
         _suggestRole = RoleChips[0];
@@ -49,6 +50,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         // More MIDI read (a folder or project added, or the list read again): the progressions are found again.
         if (!quick) main.Midi.Read += (_, _) => _ = RefreshProgressionsAsync();
         Show();
+        if (_store.OpenFailed)
+            Message = $"Your last idea couldn't be opened, so a new one was started. The old one is kept in Ideas as “{_store.KeptAs}”.";
         _wasEmpty = IsEmpty;   // nothing looked up while being made: Opened does that
     }
 
@@ -91,7 +94,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     /// <summary>The timeline's length, in ticks.</summary>
     public long Length => Section.Length;
-    public bool IsEmpty => Layers.Count == 0;
+    /// <summary>Nothing on the timeline yet: no tracks, and no chords on the chord track (chords first counts as something to fit to).</summary>
+    public bool IsEmpty => Layers.Count == 0 && !HasChordTrack;
     public string Title => _session.Name;
 
     SectionHarmony? _harmony;
@@ -309,18 +313,20 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (harmony && Section.Layers.Any(l => l.Written.Length > 0) && _writtenFor != WrittenKey(LaneForWriting()))
             RewriteWritten();
         Revision++;
-        if (settled)
-        {
-            // A cut-down playground is a sketch: nothing to keep until Open in Playground takes it over.
-            try { if (!IsQuick) _store.SaveCurrent(_session); }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Couldn't save the idea: {e.Message}"; }
-        }
+        if (settled) SaveCurrent();
         if (harmony) HarmonyChanged();
         else RefreshEnergy();
         EmptyChanged();
         if (!settled) return;
         if (_playing) _ = PlayAsync(keepPlace: true);
         PlayInBitwigSoon();
+    }
+
+    void SaveCurrent()
+    {
+        // A cut-down playground is a sketch: nothing to keep until Open in Playground takes it over.
+        try { if (!IsQuick) _store.SaveCurrent(_session); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Couldn't save the idea: {e.Message}"; }
     }
 
     /// <summary>The chord track as parts last followed it.</summary>
@@ -375,9 +381,12 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     void Restore(string json)
     {
         if (PlaygroundSession.FromJson(json) is not { } s) return;
+        // Where the idea is saved isn't undone with its changes: saved, then undone and saved again, it still replaces
+        // itself. A step from another idea (before New idea or Open) keeps its own.
+        if (s.Id == _session.Id) s.SavedAs = _session.SavedAs;
         _session = s;
         Show();
-        if (Loop is { } loop) SetLoop(loop);   // kept inside the timeline as it now is
+        if (Loop is { } loop) LoopOver(loop);   // kept inside the timeline as it now is
         Changed(harmony: false);
     }
 
@@ -397,10 +406,18 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     [RelayCommand]
     void SaveIdea()
     {
+        var named = _session.Name;
         try
         {
-            _store.SaveIdea(_session);
-            Message = $"Saved “{_session.Name}”. Open it again from Ideas.";
+            // Another idea saved by the same name is kept: this one is saved with a number after its name.
+            var name = _store.SaveIdea(_session);
+            _showing = true;
+            IdeaName = _session.Name;
+            _showing = false;
+            OnPropertyChanged(nameof(Title));
+            SaveCurrent();   // where it's saved is kept with it, so saving it again replaces just that one
+            Message = _session.Name == named ? $"Saved “{named}”. Open it again from Ideas."
+                : $"Saved as “{name}”, so the other idea called “{named}” is kept. Open either from Ideas.";
             OnPropertyChanged(nameof(SavedIdeas));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Couldn't save it: {e.Message}"; }
@@ -411,7 +428,16 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     [RelayCommand]
     void OpenIdea(string? name)
     {
-        if (name is null || _store.LoadIdea(name) is not { } s) return;
+        if (name is null) return;
+        PlaygroundSession? s;
+        try { s = _store.LoadIdea(name); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { s = null; }
+        if (s is null)
+        {
+            // Saved by a newer build, damaged, or open in another program for now: it stays in Ideas to try again later.
+            Message = $"“{name}” couldn't be opened. It's still in Ideas, so you can try again later.";
+            return;
+        }
         Remember();
         StopPlaying();
         _session = s;
@@ -424,6 +450,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     partial void OnIdeaNameChanged(string value)
     {
         if (_showing || value == _session.Name) return;
+        Remember();
         _session.Name = value.Trim().Length == 0 ? "Untitled idea" : value.Trim();
         OnPropertyChanged(nameof(Title));
         Changed(harmony: false);
@@ -434,24 +461,35 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (_showing) return;
         var tempo = Math.Clamp(Math.Round(value), 40, 240);
         if (tempo == _session.Tempo) return;
+        // Steps close together (scrolling over it) are one undo step, unless something else was changed in between.
+        if (_tempoGesture == 0 || _gesture != _tempoGesture)
+        {
+            Remember();
+            _gesture = _tempoGesture = GestureIds.Next();
+        }
         _session.Tempo = tempo;
         _ = SaveTempoSoon();
     }
 
     int _tempoMoves;
+    /// <summary>The undo step the tempo steps going on now are part of; 0 once they've stopped.</summary>
+    int _tempoGesture;
 
     /// <summary>Saved (and the music started again at the new speed) once the tempo slider stops, not on every step of a drag.</summary>
     async Task SaveTempoSoon()
     {
         var move = ++_tempoMoves;
         await Task.Delay(300);
-        if (move == _tempoMoves) Changed(harmony: false);
+        if (move != _tempoMoves) return;
+        _tempoGesture = 0;
+        Changed(harmony: false);
     }
 
     partial void OnKeyTextChanged(string value)
     {
         if (_showing || value == _session.Key) return;
         if (value.Trim().Length > 0 && MusicTheory.ParseKey(value) is null) return;
+        Remember();
         _session.Key = value.Trim();
         Changed();
     }
@@ -459,6 +497,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     partial void OnIsClassicalChanged(bool value)
     {
         if (_showing) return;
+        Remember();
         _session.Style = value ? HarmonyStyle.Classical : HarmonyStyle.JazzGospel;
         FollowChordTrack(all: true);
         Changed();
@@ -492,7 +531,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
                 }
                 l.Render();
             }
-        if (Loop is { } loop) SetLoop(loop);   // kept inside the timeline, or dropped if it's now past the end
+        if (Loop is { } loop) LoopOver(loop);   // kept inside the timeline, or dropped if it's now past the end
         _showing = true;
         Bars = Section.Bars;
         _showing = false;
@@ -541,7 +580,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     internal void PickLabel(PlaygroundLabel? label)
     {
         SelectedLabel = label;
-        if (label is not null) SetLoop(new RollRange(label.Start, label.End));
+        if (label is not null) LoopOver(new RollRange(label.Start, label.End));
         _showing = true;
         FeelPick = FeelHere.ToString();
         _showing = false;
@@ -604,12 +643,39 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         return layer;
     }
 
-    string UniqueName(string name)
+    /// <param name="except">The track being renamed, which can keep its own name.</param>
+    string UniqueName(string name, PlaygroundLayer? except = null) => UniqueName(Section, name, except);
+
+    /// <summary><paramref name="name"/>, or with a number after it when another track on <paramref name="timeline"/> has it.</summary>
+    static string UniqueName(PlaygroundSection timeline, string name, PlaygroundLayer? except = null)
     {
         name = name.Trim().Length == 0 ? "Part" : name.Trim();
-        if (Section.Layers.All(l => l.Name != name)) return name;
+        if (!Taken(name)) return name;
         for (var i = 2; ; i++)
-            if (Section.Layers.All(l => l.Name != $"{name} {i}")) return $"{name} {i}";
+        {
+            // A long name is cut short to make room for its number, so the number is still in its file's name (which is
+            // cut at 120 characters) and each number tried is a different file.
+            var number = $" {i}";
+            var numbered = name[..Math.Min(name.Length, TextScan.LongestFileName - number.Length)].TrimEnd() + number;
+            if (!Taken(numbered)) return numbered;
+        }
+
+        // Names are told apart as their dragged files are ("Chords" and "chords", "Lead?" and "Lead*" are one file on
+        // Windows), so each track still drags out as a file of its own.
+        bool Taken(string n) => timeline.Layers.Any(l => l != except
+            && TextScan.SafeFileName(l.Name).Equals(TextScan.SafeFileName(n), StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// A track renamed: a name another track has gets a number after it, as new tracks do, so each still goes out to the
+    /// DAW as a track of its own (MIDI tracks are told apart by name).
+    /// </summary>
+    internal void RenameLayer(LayerRow row, string name)
+    {
+        if (name.Trim().Length == 0) return;
+        name = UniqueName(name, except: row.Layer);
+        if (name == row.Layer.Name) { row.Changed(); return; }   // the box shows its name again
+        EditLayer(row, l => l.Name = name, harmony: false);
     }
 
     /// <summary>
@@ -886,12 +952,12 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     {
         if (range is not { } r)
         {
-            SetLoop(null);
+            LoopOver(null);
             return;
         }
         long a = Math.Max(row.At + r.Start, row.Clip.Start), b = Math.Min(row.At + r.End, row.Clip.End);
         if (b <= a) return;
-        SetLoop(new RollRange(a, b));
+        LoopOver(new RollRange(a, b));
         if (SwapTarget is null) return;
         RightTab = SuggestTabIndex;
         Message = $"{LoopText} of {row.Clip.Name} picked: Suggest finds the bit of each part that fits there, and Swap in puts one in. Right-click the bar numbers to let go.";
@@ -917,7 +983,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (Matches.Count > 0 || target is not null) _ = FindMatchesAsync();
     }
 
-    partial void OnSelectedClipChanged(ClipRow? value) => SuggestFollow(false);
+    partial void OnSelectedClipChanged(ClipRow? value)
+    {
+        if (!_showing) _chordLaneLast = false;   // a clip picked (from the track list, or one just put in): Delete is for it now
+        SuggestFollow(false);
+    }
 
     /// <summary>
     /// Cuts <paramref name="from"/>–<paramref name="to"/> out of the clips on <paramref name="layer"/>, as a DAW does when
@@ -1295,9 +1365,13 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         // is, not by its name (the part being tried may share one). The chips aren't undone, so neither is this.
         var was = _songOff;
         _songOff = off.ToHashSet();
-        var rows = Layers.Where(r => r.Layer.SongPart.Length > 0 && song.Contains(r.Layer.SongPart)
-                                     && (was is null || was.Contains(r.Layer.SongPart) != off.Contains(r.Layer.SongPart))
-                                     && r.Layer.Muted != off.Contains(r.Layer.SongPart)).ToList();
+        bool Flipped(PlaygroundLayer l) => l.SongPart.Length > 0 && song.Contains(l.SongPart) && (was is null || was.Contains(l.SongPart) != off.Contains(l.SongPart));
+        // The undo steps too, so going back to before a chip was clicked leaves the part as the chip shows it.
+        ChangeHistory(s =>
+        {
+            foreach (var l in s.Timeline.Layers.Where(Flipped)) l.Muted = off.Contains(l.SongPart);
+        });
+        var rows = Layers.Where(r => Flipped(r.Layer) && r.Layer.Muted != off.Contains(r.Layer.SongPart)).ToList();
         if (rows.Count == 0) return;
         foreach (var r in rows)
         {
@@ -1308,6 +1382,18 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     }
 
     HashSet<string>? _songOff;
+
+    /// <summary>Every undo and redo step changed by <paramref name="change"/>, for a change that isn't undone itself.</summary>
+    void ChangeHistory(Action<PlaygroundSession> change)
+    {
+        foreach (var steps in new[] { _undo, _redo })
+            for (var i = 0; i < steps.Count; i++)
+            {
+                if (PlaygroundSession.FromJson(steps[i]) is not { } step) continue;
+                change(step);
+                if (step.ToJson() is var json && json != steps[i]) steps[i] = json;
+            }
+    }
 
     internal void ToggleMute(LayerRow row) => EditLayer(row, l => l.Muted = !l.Muted);
 
@@ -1436,6 +1522,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     partial void OnSelectedLayerChanged(LayerRow? value)
     {
+        if (!_showing) _chordLaneLast = false;   // a track picked: Delete is for its clip now
         // Picking a track picks its first clip, unless one of its clips is picked already.
         if (SelectedClip?.Track != value)
             SelectedClip = value is { Layer.Clips.Count: > 0 } t ? new ClipRow(this, t, t.Layer.Clips[0]) : null;
@@ -1551,6 +1638,10 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     ProgressionModel? _model;
     string _modelFor = "";
+    /// <summary>The learning going on now and what it's for, so callers asking meanwhile wait for it instead of starting their own.</summary>
+    Task<ProgressionModel>? _learning;
+    string _learningFor = "";
+    CancellationTokenSource? _learningCts;
 
     int _nextRequest;
 
@@ -1564,12 +1655,28 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (catalogue is null) return _model ??= ProgressionModel.Learn([]).With(ProgressionModel.FromCharts);
         var songs = Harmony.Songs;
         var key = string.Join("|", songs.OrderBy(s => s)) + ":" + catalogue.Entries.Count;
-        if (_model is null || _modelFor != key)
+        if (_model is not null && _modelFor == key) return _model;
+        // One run through every chord part for each set of songs left out: one for songs no longer in the idea is stopped.
+        if (_learning is null || _learningFor != key)
         {
-            var model = await UiWork.Run(() => ProgressionModel.Learn(catalogue.Entries, songs).With(ProgressionModel.FromCharts));
-            (_model, _modelFor) = (model, key);
+            _learningCts?.Cancel();
+            var cts = _learningCts = new CancellationTokenSource();
+            _learningFor = key;
+            _learning = UiWork.Run(() => ProgressionModel.Learn(catalogue.Entries, songs, cts.Token).With(ProgressionModel.FromCharts));
         }
-        return _model;
+        var learning = _learning;
+        try
+        {
+            var model = await learning;
+            if (_learning == learning) (_model, _modelFor, _learning) = (model, key, null);
+            return model;
+        }
+        catch (OperationCanceledException) { return null; }   // the songs changed meanwhile: the newer call learns for them
+        catch when (_learning == learning)
+        {
+            (_learning, _learningFor) = (null, "");   // it went wrong: the next call tries again
+            throw;
+        }
     }
 
     /// <summary>The page opened: the MIDI is read and learned from once, then the next chords and Harmonise use it.</summary>
@@ -1687,24 +1794,15 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// New chords from <paramref name="from"/> to <paramref name="to"/>, played by the chord clips there (chords are heard,
     /// never typed: Solomon, 2026-10-19). Each one's notes in those bars are voiced again on the new chords, struck with
     /// the rhythm they had; a clip changed this way plays its notes as they are from
-    /// then on. With no chord clip there, a plain chord clip is put over those bars.
+    /// then on. Muted chord clips (and those not soloed) change too, so they never play the old chords over the new ones
+    /// once they're heard again. With no chord clip there that isn't muted, a plain chord clip is put over those bars.
     /// </summary>
     /// <returns>Whether it made a new chord track.</returns>
     static bool Rechord(PlaygroundSection timeline, IReadOnlyList<TimedChord> lane, long from, long to)
     {
-        var clips = PlaygroundSession.Audible(timeline).Where(l => l.Written.Length == 0)
+        var clips = timeline.Layers.Where(l => l.Written.Length == 0)
             .SelectMany(l => l.Clips.Where(c => (c.Role == MidiRoles.Chords || c.Role == MidiRoles.Other && l.Role == MidiRoles.Chords) && c.Start < to && c.End > from)
                                     .Select(c => (Layer: l, Clip: c))).ToList();
-        if (clips.Count == 0)
-        {
-            var notes = Voicer.Plain(LaneAt(lane, from, to));
-            var track = timeline.Layers.FirstOrDefault(l => l.Name == "Chords" && l.Written.Length == 0);
-            var added = track is null;
-            if (track is null) timeline.Layers.Add(track = new PlaygroundLayer { Name = "Chords", Role = MidiRoles.Chords, Program = GmSounds.DefaultFor(MidiRoles.Chords) });
-            track.Clips.Add(PlaygroundClip.Of("Chords", MidiRoles.Chords, notes, to - from, from, to - from));
-            track.Render();
-            return added;
-        }
         foreach (var (layer, c) in clips)
         {
             var local = c.Render().Select(n => n with { Start = n.Start - c.Start }).ToList();
@@ -1725,7 +1823,28 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             c.Pinned = true;
             layer.Render();
         }
-        return false;
+        if (clips.Any(p => !p.Layer.Muted)) return false;
+        // A Chords track that isn't muted takes the plain chords (over anything it had there, as in a DAW), else a new one.
+        // Its name is matched as UniqueName names it ("chords", or "Chords 2" beside a muted one), so one is made only once.
+        var notes = Voicer.Plain(LaneAt(lane, from, to));
+        var track = timeline.Layers.FirstOrDefault(l => PlainChordsName(l.Name) && l.Written.Length == 0 && !l.Muted);
+        var added = track is null;
+        if (track is null)
+        {
+            timeline.Layers.Add(track = new PlaygroundLayer { Name = UniqueName(timeline, "Chords"), Role = MidiRoles.Chords, Program = GmSounds.DefaultFor(MidiRoles.Chords) });
+        }
+        CutOut(track, from, to);
+        track.Clips.Add(PlaygroundClip.Of("Chords", MidiRoles.Chords, notes, to - from, from, to - from));
+        track.Render();
+        return added;
+    }
+
+    /// <summary>"Chords", or "Chords" with a number after it, told apart as their dragged files are (as in UniqueName).</summary>
+    static bool PlainChordsName(string name)
+    {
+        var file = TextScan.SafeFileName(name);
+        return file.Equals("Chords", StringComparison.OrdinalIgnoreCase)
+            || file.StartsWith("Chords ", StringComparison.OrdinalIgnoreCase) && file.Length > 7 && file[7..].All(char.IsAsciiDigit);
     }
 
     // ---- suggestions from the library ----
@@ -2066,8 +2185,13 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     internal void TakeSketch(PlaygroundSection sketch, string name)
     {
         StopPlaying();
-        Remember();
         var at = IsEmpty ? 0 : Section.Length;
+        if (at + sketch.Length > (long)MaxBars * Bar)
+        {
+            TimelineFull(name, sketch.Bars);
+            return;
+        }
+        Remember();
         if (IsEmpty) Section.Bars = sketch.Bars;
         Reach(at + sketch.Length);
         foreach (var t in sketch.Layers)
@@ -2102,6 +2226,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     {
         StopPlaying();
         var bars = notes is { Count: > 0 } ? Math.Clamp(PhraseAnalyser.BarsOf(notes), 1, GrowBars) : NewBars;
+        if (!IsEmpty && Section.Bars + bars > MaxBars)
+        {
+            TimelineFull(songName, bars);
+            return;
+        }
         if (!IsEmpty)
         {
             Remember();
@@ -2126,6 +2255,17 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             : $"{title ?? entry.Title} on {(brought ? $"{songName}, its bars {FromBar}–{FromBar + bars - 1}" : "its own")}{(Loop is { } r ? $", at bar {r.Start / Bar + 1}" : "")}. Mute the song's parts to hear it alone; Undo takes it out.";
     }
 
+    /// <summary>
+    /// Bars brought in from another page don't fit after the last bar (the timeline is at most <see cref="MaxBars"/>): the
+    /// page says so, and nothing is added.
+    /// </summary>
+    void TimelineFull(string name, int bars)
+    {
+        Message = $"There's no room for {name} ({bars} bar{(bars == 1 ? "" : "s")}): the timeline can't go past {MaxBars} bars. " +
+                  "Make the timeline shorter, or start a new idea, then try again.";
+        if (_main.Nav.FirstOrDefault(n => n.Page == this) is { } page) _main.SelectedNav = page;
+    }
+
     // ---- loop points ----
 
     /// <summary>
@@ -2142,8 +2282,16 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     }
     public string LoopText => Loop is { } r ? $"Bars {r.Start / Bar + 1}–{(r.End + Bar - 1) / Bar}" : "";
 
+    /// <summary>Bars highlighted on the timeline (or along the small playground's piano roll), or let go of: Delete is for the clip now.</summary>
     [RelayCommand]
     void SetLoop(RollRange? range)
+    {
+        _chordLaneLast = false;
+        LoopOver(range);
+    }
+
+    /// <summary>The highlight put over <paramref name="range"/> (kept inside the timeline), or taken off with null.</summary>
+    void LoopOver(RollRange? range)
     {
         Loop = range is { } r && Math.Clamp(r.End, 1, Length) > Math.Clamp(r.Start, 0, Length)
             ? new RollRange(Math.Clamp(r.Start, 0, Length), Math.Clamp(r.End, 1, Length)) : null;
@@ -2153,7 +2301,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     }
 
     [RelayCommand]
-    void ClearLoop() => SetLoop(null);
+    void ClearLoop() => LoopOver(null);
 
     /// <summary>The harmony suggestions are fitted to: the loop's bars when there are loop points, else the section.</summary>
     /// <summary>
@@ -2177,7 +2325,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     partial void OnCursorChanged(long value) { if (_playing) _ = PlayAsync(); }
 
     [RelayCommand]
-    void SetCursor(long tick) => Cursor = Math.Clamp(tick, 0, Math.Max(0, Length - 1));
+    void SetCursor(long tick)
+    {
+        _chordLaneLast = false;   // the bar numbers clicked: Delete is for the clip again
+        Cursor = Math.Clamp(tick, 0, Math.Max(0, Length - 1));
+    }
 
     [RelayCommand]
     void ToStart() => Cursor = 0;
@@ -2723,7 +2875,7 @@ public sealed partial class LayerRow : ObservableObject
         set
         {
             if (value.Trim().Length == 0 || value == Layer.Name) return;
-            _owner.EditLayer(this, l => l.Name = value.Trim(), harmony: false);
+            _owner.RenameLayer(this, value);
         }
     }
 
@@ -3222,6 +3374,16 @@ public static class TrackColours
         MidiRoles.Drums => "#D79B3A",
         _ => "#7D8590",
     };
+}
+
+/// <summary>
+/// Numbers for drags and typed values (<see cref="ValueStep"/>, <see cref="FaderMove"/>), one counter for every control that
+/// sends them, so two different gestures never share a number and run into one undo step.
+/// </summary>
+public static class GestureIds
+{
+    static int _last;
+    public static int Next() => Interlocked.Increment(ref _last);
 }
 
 /// <summary>A value dragged or typed: how many steps it moves, and which drag or typing it's part of (one undo step for all of them).</summary>

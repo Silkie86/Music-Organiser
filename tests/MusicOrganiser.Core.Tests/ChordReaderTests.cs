@@ -46,6 +46,21 @@ public class ChordReaderTests
         Assert.Equal($"1:{name}", Read(Held(0, Bar, keys), Bar));
     }
 
+    [Theory]
+    [InlineData("D/C", "D7/C")]   // the same four notes, the C in the bass (it was D7, the C on top)
+    [InlineData("C/E", "C/E")]   // was C
+    [InlineData("F/A", "F/A")]
+    [InlineData("G7/F", "G7/F")]
+    [InlineData("Dm9", "Dm9")]
+    public void Chords_written_plainly_are_heard_back_as_the_same_chords(string name, string heard)
+    {
+        // A slash chord's bass is the low note, and a bass that's only a bass isn't played above it too.
+        var typed = Chart(name);
+        var back = ChordReader.Read(Voicer.Plain(typed), Bar);
+        Assert.Equal($"1:{heard}", Read(Voicer.Plain(typed), Bar));
+        Assert.Equal((typed[0].Chord.Bass, typed[0].Chord.Mask), (back[0].Chord.Bass, back[0].Chord.Mask));
+    }
+
     [Fact]
     public void A_right_hand_on_its_own_has_no_bass()
     {
@@ -104,6 +119,20 @@ public class ChordReaderTests
         Assert.Equal("1:C 2:F", Read(chords.Concat(tune).OrderBy(n => n.Start).ToList(), 2 * Bar));
         var broken = new[] { 48, 52, 55, 60, 64, 60, 55, 52, 53, 57, 60, 65, 69, 65, 60, 57 }.Select((k, i) => new NoteEvent(i * (long)(Beat / 2), Beat / 2, k, 100)).ToList();
         Assert.Equal("1:C 2:F", Read(broken, 2 * Bar));
+    }
+
+    [Fact]
+    public void A_note_that_starts_before_tick_0_is_read_without_failing()
+    {
+        // Studio One can save a note pushed in before the song's start: the whole song was a failed read.
+        var notes = Held(-2 * Beat, Bar, 48, 52, 55).Concat(Held(2 * Beat, Bar, 53, 57, 60)).ToList();
+        Assert.Equal("1:C 1.5:F", Read(notes, 2 * Bar));
+        var analysis = PhraseAnalyser.Analyse(notes, "Keys");
+        Assert.Equal(MidiRoles.Chords, analysis.Role);
+        // Put in its first bar, it starts in the bar before tick 0, so nothing is left below 0.
+        var placed = PhraseAnalyser.Normalise(Held(-Beat / 2, Beat, 60), PhraseAnalyser.Ppq);
+        Assert.Equal(Bar - Beat / 2, Assert.Single(placed).Start);
+        Assert.Equal(16, SectionFit.Onsets(notes).Length);
     }
 
     [Fact]

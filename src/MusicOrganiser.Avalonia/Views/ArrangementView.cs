@@ -106,7 +106,7 @@ public sealed class ArrangementView : Control
             {
                 // A file that fails to read is drawn without a waveform; it mustn't stop the others or leave the timer running.
                 AudioPeaks? peaks;
-                try { peaks = AudioPeaks.For(f); }
+                try { peaks = MusicOrganiser.Core.Parallelism.Background(() => AudioPeaks.For(f)); }   // low priority, sharing the background slots
                 catch (Exception) { peaks = null; }
                 Dispatcher.UIThread.Post(() =>
                 {

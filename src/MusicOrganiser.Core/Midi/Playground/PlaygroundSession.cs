@@ -114,6 +114,16 @@ public sealed class PlaygroundSession
     public int Current { get; set; }
     /// <summary>2 for an idea on one timeline of clips; 1 (or missing) for one saved as sections, opened by <see cref="Upgrade"/>.</summary>
     public int Version { get; set; } = 2;
+    /// <summary>
+    /// The name in Ideas this idea was opened from or last saved as, or "" for one never saved: saving it again replaces
+    /// that one, never another idea that happens to have the same name (<see cref="PlaygroundStore.SaveIdea"/>).
+    /// </summary>
+    public string SavedAs { get; set; } = "";
+    /// <summary>
+    /// Tells this idea apart from others in Undo's steps, so where it's saved (<see cref="SavedAs"/>) follows it through
+    /// Undo and Redo but never onto another idea. A new one each time an idea is started or opened from Ideas.
+    /// </summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>The timeline: since version 2 an idea is one section, its parts tracks of clips and its old sections labels.</summary>
     [JsonIgnore]
@@ -123,14 +133,14 @@ public sealed class PlaygroundSession
 
     public string ToJson() => JsonSerializer.Serialize(this, Json);
 
-    /// <summary>Whether the idea's JSON names its version at the top level, read without building the whole tree a second time.</summary>
-    static bool HasVersion(string json)
+    /// <summary>Whether the idea's JSON names <paramref name="property"/> at the top level, read without building the whole tree a second time.</summary>
+    internal static bool Has(string json, string property)
     {
         var reader = new Utf8JsonReader(System.Text.Encoding.UTF8.GetBytes(json));
         while (reader.Read())
             if (reader.TokenType == JsonTokenType.PropertyName && reader.CurrentDepth == 1)
             {
-                if (reader.ValueTextEquals(nameof(Version))) return true;
+                if (reader.ValueTextEquals(property)) return true;
                 reader.Read();
                 reader.TrySkip();
             }
@@ -144,14 +154,37 @@ public sealed class PlaygroundSession
             var s = JsonSerializer.Deserialize<PlaygroundSession>(json, Json);
             if (s is null) return null;
             // Ideas saved before the timeline have no version.
-            if (!HasVersion(json)) s.Version = 1;
+            if (!Has(json, nameof(Version))) s.Version = 1;
+            s.NoMissingLists();
             if (s.Sections.Count == 0) s.Sections.Add(new PlaygroundSection());
             s.Current = Math.Clamp(s.Current, 0, s.Sections.Count - 1);
             s.Upgrade();
             return s;
         }
-        catch (JsonException) { return null; }
-        catch (FormatException) { return null; }
+        // Anything else wrong with it (a kind this build doesn't know, bad base64, a missing value) means it can't be
+        // opened: the caller keeps the file rather than working on half of it.
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>Lists written as null (a file changed by hand) read as empty, as missing ones do.</summary>
+    void NoMissingLists()
+    {
+        Sections = Sections?.OfType<PlaygroundSection>().ToList() ?? [];
+        foreach (var section in Sections)
+        {
+            section.Layers = section.Layers?.OfType<PlaygroundLayer>().ToList() ?? [];
+            section.Labels = section.Labels?.OfType<PlaygroundLabel>().ToList() ?? [];
+            section.ChordTrack = section.ChordTrack?.OfType<PlaygroundChord>().ToList() ?? [];
+            foreach (var layer in section.Layers)
+            {
+                layer.Clips = layer.Clips?.OfType<PlaygroundClip>().ToList() ?? [];
+                foreach (var clip in layer.Clips)
+                {
+                    clip.Fits ??= [];
+                    clip.Under = clip.Under?.OfType<PlaygroundChord>().ToList() ?? [];
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -258,15 +291,71 @@ public sealed class PlaygroundStore(string folder)
     public bool HasCurrent => File.Exists(CurrentFile);
     string IdeasFolder => Path.Combine(Folder, "ideas");
 
+    /// <summary>
+    /// Whether the idea being worked on was there but couldn't be opened (saved by a newer build, damaged, or locked), so
+    /// a new one was started. Its file is never saved over: it's moved into the ideas as <see cref="KeptAs"/>.
+    /// </summary>
+    public bool OpenFailed { get; private set; }
+    /// <summary>The name in Ideas of the idea that couldn't be opened, so it can be found and opened again later.</summary>
+    public string? KeptAs { get; private set; }
+    /// <summary>The idea that couldn't be opened is still current.json (it couldn't be moved yet): moved before the next save.</summary>
+    bool _toPutAside;
+
     public PlaygroundSession LoadCurrent()
     {
-        try { return File.Exists(CurrentFile) ? PlaygroundSession.FromJson(File.ReadAllText(CurrentFile)) ?? new() : new(); }
-        catch (IOException) { return new(); }
+        if (!File.Exists(CurrentFile)) return new();
+        for (var tries = 1; ; tries++)
+        {
+            try
+            {
+                var json = File.ReadAllText(CurrentFile);
+                if (PlaygroundSession.FromJson(json) is { } session) return WhereSaved(session, json);
+                break;
+            }
+            // Another program (a virus check, OneDrive) had it open for a moment: tried once more before giving up.
+            catch (IOException) when (tries == 1) { Thread.Sleep(100); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { break; }
+        }
+        OpenFailed = _toPutAside = true;
+        KeptAs = $"Kept idea {DateTime.Now:yyyy-MM-dd HH.mm}";
+        try { PutAside(); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // tried again before the next save
+        return new();
+    }
+
+    /// <summary>
+    /// An idea being worked on from before it remembered where it was saved: one named as an idea in Ideas was most
+    /// likely opened from it or saved as it, so saving it replaces that one as it did then. Not an untitled one, which
+    /// only shares the name every new idea starts with, so saving it never saves over the untitled idea already there.
+    /// </summary>
+    PlaygroundSession WhereSaved(PlaygroundSession session, string json)
+    {
+        var named = TextSafe(session.Name);
+        if (!PlaygroundSession.Has(json, nameof(PlaygroundSession.SavedAs)) && named != "Untitled idea"
+            && File.Exists(Path.Combine(IdeasFolder, named + ".json")))
+            session.SavedAs = named;
+        return session;
+    }
+
+    /// <summary>The idea that couldn't be opened moved out of the way, into Ideas, so it's listed and can be opened later.</summary>
+    void PutAside()
+    {
+        if (File.Exists(CurrentFile))
+        {
+            Directory.CreateDirectory(IdeasFolder);
+            var name = KeptAs!;
+            for (var i = 2; File.Exists(Path.Combine(IdeasFolder, name + ".json")); i++) name = $"{KeptAs} ({i})";
+            File.Move(CurrentFile, Path.Combine(IdeasFolder, name + ".json"));
+            KeptAs = name;
+        }
+        _toPutAside = false;
     }
 
     public void SaveCurrent(PlaygroundSession session)
     {
         Directory.CreateDirectory(Folder);
+        // Never saved over the idea that couldn't be opened: while it can't be moved aside, nothing is saved.
+        if (_toPutAside) PutAside();
         var temp = CurrentFile + ".tmp";
         File.WriteAllText(temp, session.ToJson());
         File.Move(temp, CurrentFile, overwrite: true);
@@ -278,16 +367,33 @@ public sealed class PlaygroundStore(string folder)
             ? new DirectoryInfo(IdeasFolder).GetFiles("*.json").OrderByDescending(f => f.LastWriteTimeUtc).Select(f => Path.GetFileNameWithoutExtension(f.Name)).ToList()
             : [];
 
-    public void SaveIdea(PlaygroundSession session)
+    /// <summary>
+    /// Saves the idea in Ideas under its name. Another idea already saved by that name is never saved over: this one gets
+    /// a number ("Untitled idea 2"), and its name becomes that. Saving the one it was opened from or saved as replaces it.
+    /// </summary>
+    /// <returns>The name it was saved as.</returns>
+    public string SaveIdea(PlaygroundSession session)
     {
         Directory.CreateDirectory(IdeasFolder);
-        File.WriteAllText(Path.Combine(IdeasFolder, TextSafe(session.Name) + ".json"), session.ToJson());
+        var named = TextSafe(session.Name);
+        var name = named;
+        for (var i = 2; !name.Equals(session.SavedAs, StringComparison.OrdinalIgnoreCase) && File.Exists(Path.Combine(IdeasFolder, name + ".json")); i++)
+            name = $"{named} {i}";
+        var was = (session.Name, session.SavedAs);
+        if (name != named) session.Name = name;
+        session.SavedAs = name;
+        try { File.WriteAllText(Path.Combine(IdeasFolder, name + ".json"), session.ToJson()); }
+        catch { (session.Name, session.SavedAs) = was; throw; }
+        return name;
     }
 
     public PlaygroundSession? LoadIdea(string name)
     {
         var file = Path.Combine(IdeasFolder, TextSafe(name) + ".json");
-        return File.Exists(file) ? PlaygroundSession.FromJson(File.ReadAllText(file)) : null;
+        if (!File.Exists(file) || PlaygroundSession.FromJson(File.ReadAllText(file)) is not { } idea) return null;
+        idea.SavedAs = TextSafe(name);   // saved again, it goes back where it came from
+        idea.Id = Guid.NewGuid().ToString("N");   // opened twice, or saved under two names, each is an idea of its own
+        return idea;
     }
 
     static string TextSafe(string name)

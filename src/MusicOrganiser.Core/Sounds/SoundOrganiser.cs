@@ -198,6 +198,28 @@ public sealed class SoundOrganiser : IDisposable
         var todo = found.Where(f => !known.TryGetValue(f.Path, out var k) || k.Mtime != f.Mtime || k.Size != f.Size)
                         .Select(f => (f.Path, f.Size, f.Mtime)).ToList();
 
+        // A folder on an unplugged drive (or one that couldn't be read this time) keeps its sounds,
+        // tags and deep listening; only files that are really gone are forgotten. So does a sound this app
+        // can't read here but could elsewhere (MP3, FLAC, M4A and OGG need Windows' decoders, which a Mac or
+        // Linux doesn't have yet).
+        static string Dir(string d) => System.IO.Path.EndsInDirectorySeparator(d) ? d : d + System.IO.Path.DirectorySeparatorChar;
+        var keep = folders.Where(f => !Directory.Exists(f)).Concat(unreadable).Select(Dir).ToList();
+        var listed = folders.Select(Dir).ToList();
+        var present = files.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        bool Kept(string p) => keep.Any(k => p.StartsWith(k, StringComparison.OrdinalIgnoreCase)) ||
+                               !AudioFile.CanRead(p) && listed.Any(f => p.StartsWith(f, StringComparison.OrdinalIgnoreCase)) && File.Exists(p);
+
+        // Files renamed or moved (a pack's folder renamed, say) carry on as the sounds they were, with everything
+        // you gave them, and aren't listened to again, unless the new name says a different loop, tempo or key.
+        var moves = Moves(known.Where(k => !present.Contains(k.Key) && !Kept(k.Key)).Select(k => (k.Key, k.Value.Size, k.Value.Mtime)),
+                          todo.Where(t => !known.ContainsKey(t.Path)));
+        var moved = Library.Move(moves);
+        if (moves.Count > 0)
+        {
+            var arrived = moves.Where(m => SameHints(m.From, m.To)).Select(m => m.To).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            todo = todo.Where(t => !arrived.Contains(t.Path)).ToList();
+        }
+
         var done = 0;
         var pending = new ConcurrentQueue<SoundLibrary.Analysed>();
         void Flush()
@@ -227,19 +249,10 @@ public sealed class SoundOrganiser : IDisposable
             }
         });
         Flush();
-        // A folder on an unplugged drive (or one that couldn't be read this time) keeps its sounds,
-        // tags and deep listening; only files that are really gone are forgotten. So does a sound this app
-        // can't read here but could elsewhere (MP3, FLAC, M4A and OGG need Windows' decoders, which a Mac or
-        // Linux doesn't have yet).
-        static string Dir(string d) => System.IO.Path.EndsInDirectorySeparator(d) ? d : d + System.IO.Path.DirectorySeparatorChar;
-        var keep = folders.Where(f => !Directory.Exists(f)).Concat(unreadable).Select(Dir).ToList();
-        var listed = folders.Select(Dir).ToList();
-        var removed = Library.RemoveMissing(files.ToHashSet(StringComparer.OrdinalIgnoreCase),
-            p => keep.Any(k => p.StartsWith(k, StringComparison.OrdinalIgnoreCase)) ||
-                 !AudioFile.CanRead(p) && listed.Any(f => p.StartsWith(f, StringComparison.OrdinalIgnoreCase)) && File.Exists(p));
-        // Nothing new and nothing gone: the sounds in memory are still right, so they aren't read in again (with
+        var removed = Library.RemoveMissing(present, Kept);
+        // Nothing new, moved or gone: the sounds in memory are still right, so they aren't read in again (with
         // 357,000 sounds that takes about 10 s, and the Sounds page would rebuild its list for nothing).
-        if (todo.Count > 0 || removed > 0 || _sounds.Count == 0) Reload();
+        if (todo.Count > 0 || removed > 0 || moved > 0 || _sounds.Count == 0) Reload();
         UpdateTypes(progress);
         return todo.Count;
     }
@@ -264,17 +277,39 @@ public sealed class SoundOrganiser : IDisposable
         }
         var todo = new List<(string Path, long Size, long Mtime)>();
         var gone = new List<string>();
+        var goneKnown = new List<(string Path, long Size, long Mtime)>();
+        var added = new List<(string Path, long Size, long Mtime)>();
         foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase).Where(Listed))
         {
             try
             {
                 var fi = new FileInfo(path);
-                if (!fi.Exists) { gone.Add(path); continue; }
+                var known = Library.KnownFile(path);
+                if (!fi.Exists)
+                {
+                    gone.Add(path);
+                    if (known is { } was) goneKnown.Add((path, was.Size, was.Mtime));
+                    continue;
+                }
                 var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
-                if (Library.KnownFile(path) is { } k && k.Mtime == mtime && k.Size == fi.Length) continue;
+                if (known is { } k && k.Mtime == mtime && k.Size == fi.Length) continue;
                 todo.Add((path, fi.Length, mtime));
+                if (known is null) added.Add((path, fi.Length, mtime));
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // still being copied: the next change gets it
+        }
+        // A rename reports the old name gone and the new one there: it carries on as the sound it was (listened to
+        // again when the new name says a different loop, tempo or key).
+        var moves = Moves(goneKnown, added);
+        var moved = Library.Move(moves);
+        var relisten = 0;
+        if (moves.Count > 0)
+        {
+            var from = moves.Select(m => m.From).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var to = moves.Where(m => SameHints(m.From, m.To)).Select(m => m.To).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            relisten = moves.Count - to.Count;
+            gone.RemoveAll(from.Contains);
+            todo.RemoveAll(t => to.Contains(t.Path));
         }
         var results = new ConcurrentBag<SoundLibrary.Analysed>();
         var done = 0;
@@ -293,10 +328,86 @@ public sealed class SoundOrganiser : IDisposable
         });
         Library.Save(results);
         var removed = Library.Remove(gone);
-        if (results.Count + removed == 0) return 0;
+        var changed = results.Count + removed + Math.Max(0, moved - relisten);   // a sound moved and listened to again counts once
+        if (changed == 0) return 0;
         Reload();
         UpdateTypes(progress);
-        return results.Count + removed;
+        return changed;
+    }
+
+    /// <summary>
+    /// Whether a renamed or moved file's new path says what its old one did about the things listening takes from the
+    /// name and folders: loop or one-shot, tempo and key. When it doesn't ("Pad.wav" renamed "Pad 90bpm Cm.wav", or
+    /// moved from "One Shots" into "Loops"), the sound is listened to again, keeping everything you gave it.
+    /// </summary>
+    public static bool SameHints(string from, string to) =>
+        SoundTypes.LoopFromPath(from) == SoundTypes.LoopFromPath(to) &&
+        SoundTypes.TempoFromName(from) == SoundTypes.TempoFromName(to) &&
+        SoundTypes.KeyFromName(from) == SoundTypes.KeyFromName(to);
+
+    /// <summary>Most same-name pairs weighed among files of one size and time; past it they're left unpaired.</summary>
+    const long MostPairs = 200_000;
+
+    /// <summary>
+    /// Pairs files gone from the library with new ones that are the same files renamed or moved: a rename or move keeps
+    /// a file's size and modified time. Among files that share those (a pack's loops often do), each pairs with the one
+    /// whose path ends the same way (file name, then its folders), when that's the only best match; a single file left
+    /// on each side is a rename. Anything less sure isn't paired, and is forgotten and listened to as before.
+    /// </summary>
+    public static List<(string From, string To)> Moves(IEnumerable<(string Path, long Size, long Mtime)> gone,
+                                                       IEnumerable<(string Path, long Size, long Mtime)> added)
+    {
+        var moves = new List<(string From, string To)>();
+        var arrived = added.GroupBy(a => (a.Size, a.Mtime)).ToDictionary(g => g.Key, g => g.Select(a => a.Path).ToList());
+        foreach (var group in gone.GroupBy(g => (g.Size, g.Mtime)))
+        {
+            if (!arrived.TryGetValue(group.Key, out var news)) continue;
+            var olds = group.Select(g => g.Path).ToList();
+            var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var unsure = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // Only files with the same name can end the same way, so each is weighed against those alone, not every new file.
+            var byName = news.ToLookup(NameOf, StringComparer.OrdinalIgnoreCase);
+            if (olds.Sum(o => (long)byName[NameOf(o)].Count()) > MostPairs) continue;   // thousands of copies: too many to tell apart
+            var alike = olds.SelectMany(o => byName[NameOf(o)].Select(n => (From: o, To: n, Same: SameEnding(o, n)))).ToList();
+            foreach (var level in alike.GroupBy(a => a.Same).OrderByDescending(g => g.Key))
+            {
+                var open = level.Where(a => !used.Contains(a.From) && !used.Contains(a.To) && !unsure.Contains(a.From) && !unsure.Contains(a.To)).ToList();
+                var froms = open.CountBy(a => a.From, StringComparer.OrdinalIgnoreCase).ToDictionary(StringComparer.OrdinalIgnoreCase);
+                var tos = open.CountBy(a => a.To, StringComparer.OrdinalIgnoreCase).ToDictionary(StringComparer.OrdinalIgnoreCase);
+                foreach (var a in open)
+                {
+                    if (froms[a.From] == 1 && tos[a.To] == 1)
+                    {
+                        moves.Add((a.From, a.To));
+                        used.Add(a.From);
+                        used.Add(a.To);
+                    }
+                    else
+                    {
+                        // Two equally good matches: neither is sure, now or with a worse match further down.
+                        unsure.Add(a.From);
+                        unsure.Add(a.To);
+                    }
+                }
+            }
+            var oldLeft = olds.Where(o => !used.Contains(o)).ToList();
+            var newLeft = news.Where(n => !used.Contains(n)).ToList();
+            if (oldLeft.Count == 1 && newLeft.Count == 1 && !unsure.Contains(oldLeft[0]) && !unsure.Contains(newLeft[0]))
+                moves.Add((oldLeft[0], newLeft[0]));
+        }
+        return moves;
+
+        static string NameOf(string path) => path[(path.LastIndexOfAny(['\\', '/']) + 1)..];
+
+        // How many names at the end of two paths are the same: 1 for the file name, 2 for it and its folder, and so on.
+        static int SameEnding(string a, string b)
+        {
+            var x = a.Split('\\', '/');
+            var y = b.Split('\\', '/');
+            var n = 0;
+            while (n < x.Length && n < y.Length && string.Equals(x[^(n + 1)], y[^(n + 1)], StringComparison.OrdinalIgnoreCase)) n++;
+            return n;
+        }
     }
 
     /// <summary>
@@ -437,14 +548,17 @@ public sealed class SoundOrganiser : IDisposable
         else Library.SetSetting(TypeModelKey, null);
 
         var zeroShot = space == "clap" ? TypePrompts() : null;
+        // Only the types that changed are written: the sounds in memory hold what the library has (they're read from it,
+        // and every change goes to both), and rewriting all 357,000 after each scan kept the database busy for seconds.
         var updates = _sounds.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Workers).Select(s =>
         {
             var (type, source, conf) = Parallelism.Background(() => ResolveType(s, model, zeroShot, space));
+            var changed = s.Type != type || s.TypeSource != source || s.TypeConfidence != conf;
             s.Type = type;
             s.TypeSource = source;
             s.TypeConfidence = conf;
-            return (s.Id, type, source, conf);
-        }).ToList();
+            return (s.Id, type, source, conf, changed);
+        }).Where(u => u.changed).Select(u => (u.Id, u.type, u.source, u.conf)).ToList();
         Library.SetTypes(updates);
         TrainTags();
         return model;
@@ -510,6 +624,10 @@ public sealed class SoundOrganiser : IDisposable
         var rng = new Random(11);
         foreach (var (tag, yours, _) in Library.TagCounts())
         {
+            // Last time's suggestions go from the sounds in memory too, so the tag filter and chips show what's stored.
+            // Each list is replaced rather than changed, as the Sounds page may be reading it.
+            foreach (var id in Library.SoundsTagged(tag, "learned"))
+                if (Get(id) is { } had) had.Tags = had.Tags.Where(t => t != tag).ToList();
             Library.ClearLearnedTags(tag);
             if (yours < 5) continue;
             var positives = Library.SoundsTagged(tag).Select(Get).OfType<Sound>().Where(p => RawVector(p, space) is not null).ToList();
@@ -540,7 +658,7 @@ public sealed class SoundOrganiser : IDisposable
             foreach (var (s, _) in suggested)
             {
                 Library.AddTag(s.Id, tag, "learned");
-                if (!s.Tags.Contains(tag)) s.Tags.Add(tag);
+                if (!s.Tags.Contains(tag)) s.Tags = [.. s.Tags, tag];
             }
             results.Add((tag, suggested.Count, accuracy));
         }

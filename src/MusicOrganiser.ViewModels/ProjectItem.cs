@@ -146,7 +146,7 @@ public sealed partial class ProjectItem : ObservableObject
             var tags = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                             .Select(t => t.ToLowerInvariant()).Distinct().Order().ToList();
             if (tags.SequenceEqual(Tags)) return;
-            _db.SetTags(Id, tags);
+            _db.SetTags(Id, tags, OlderSaves.Select(o => o.Id));   // what you add or take off goes to the older saves too
             Tags = tags;
         }
     }

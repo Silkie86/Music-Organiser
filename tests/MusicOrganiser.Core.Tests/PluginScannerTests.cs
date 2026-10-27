@@ -242,6 +242,32 @@ public class PluginScannerTests : IDisposable
     }
 
     [Fact]
+    public async Task A_plugin_file_stopped_by_the_time_limit_is_read_again_next_time_but_only_once()
+    {
+        var folder = Path.Combine(_root, "CLAP");
+        Directory.CreateDirectory(folder);
+        var file = Path.Combine(folder, "Bundle.clap");
+        File.WriteAllText(file, "code");
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        db.SetList(Scanner.PluginFoldersKey, [folder]);
+        var lib = new Scanner(db);
+        lib.ScanInstalledPlugins(out var toRead);
+        Assert.Equal([file], toRead);
+
+        // It lists one plugin, then waits (on a licence window, say) until the time limit stops it.
+        var scanner = new PluginScanner(FakeScanner("slow", [ClapLine], hang: true)) { Timeout = TimeSpan.FromSeconds(1) };
+        await lib.ReadPluginFilesAsync(scanner, toRead);
+        lib.ScanInstalledPlugins(out toRead);
+        Assert.Equal([file], toRead);   // the rest of it gets another go
+        Assert.Contains("MO Probe Effect", db.InstalledNames());   // what it listed counts meanwhile
+
+        await lib.ReadPluginFilesAsync(scanner, toRead);
+        lib.ScanInstalledPlugins(out toRead);
+        Assert.Empty(toRead);   // only one: a plugin that always hangs doesn't hold up every scan
+        Assert.Contains("MO Probe Effect", db.InstalledNames());
+    }
+
+    [Fact]
     public async Task StopAllEndsTheScannersRunningNow()
     {
         var scanner = new PluginScanner(FakeScanner("hang", [], hang: true));   // 30 seconds before it would give up

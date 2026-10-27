@@ -229,9 +229,19 @@ public sealed partial class PlaygroundViewModel
     readonly Dictionary<string, string> _bitwigTracks = [];
     /// <summary>What was last put on each part's track (its notes and length), and how many times.</summary>
     readonly Dictionary<string, (string Notes, int Times)> _inBitwig = [];
+    /// <summary>The track a part's clip is going across to now, until Bitwig has it (it launches it once it's in).</summary>
+    string? _goingAcross;
     BitwigLink? _playLink;
+    /// <summary>
+    /// The project Bitwig had in front when Play in Bitwig was turned on (null until it's asked), by its name now (it
+    /// follows a save under a new name): the parts only go across while it's in front, since Bitwig's track list follows
+    /// whichever project is.
+    /// </summary>
+    string? _playProject;
     CancellationTokenSource? _sendSoon;
     bool _sendAgain, _toldPlaying;
+    /// <summary>The last send was refused because another project was in front in Bitwig.</summary>
+    bool _paused;
 
     /// <summary>Makes a track in Bitwig and says its ID. Tests put a stand-in here, and in the two below.</summary>
     internal Func<string, CancellationToken, Task<string>> BitwigNewTrack { get; set; }
@@ -246,23 +256,54 @@ public sealed partial class PlaygroundViewModel
     {
         BitwigTransport = AskTransportAsync;
         BitwigNewTrack = async (name, ct) =>
-            (await (await PlayLinkAsync(ct)).NewTrackWithIdAsync(name, ct: ct)).Id ?? throw new DawLinkException(BitwigLink.NeedsTransport);
-        BitwigPutClip = async (track, path, ct) => await (await PlayLinkAsync(ct)).ReplaceClipAsync(track, path, 0, launch: true, ct);
-        BitwigStopTracks = async (tracks, ct) => await (await PlayLinkAsync(ct)).StopTracksAsync(tracks, ct);
+            (await InPlayProjectAsync(link => link.NewTrackWithIdAsync(name, ct: ct), ct)).Id ?? throw new DawLinkException(BitwigLink.NeedsTransport);
+        BitwigPutClip = (track, path, ct) => InPlayProjectAsync(async link =>
+        {
+            await link.ReplaceClipAsync(track, path, 0, launch: true, ct);
+            return true;
+        }, ct);
+        BitwigStopTracks = (tracks, ct) => InPlayProjectAsync(link => link.StopTracksAsync(tracks, ct), ct);
+    }
+
+    /// <summary>
+    /// Makes a change in the project the parts play in. Refused because another project is in front, it looks whether
+    /// that's the same project under a new name (saved for the first time, or with Save As): it is when it holds a track
+    /// the Playground made there, and then the parts go to that name from now on, starting with this change.
+    /// </summary>
+    async Task<T> InPlayProjectAsync<T>(Func<BitwigLink, Task<T>> change, CancellationToken ct)
+    {
+        var link = await PlayLinkAsync(ct);
+        try { return await change(link); }
+        catch (DawLinkException e) when (BitwigLink.IsElsewhere(e))
+        {
+            // By its ID and the name it was given: another project's IDs could look alike.
+            var ours = _bitwigTracks.Values.ToHashSet();
+            var project = await link.ProjectAsync(ct);
+            if (!project.Tracks.Any(t => t.Id is { } id && ours.Contains(id) && t.Name.EndsWith("(Playground)", StringComparison.Ordinal))) throw;
+            link.OnlyIn = _playProject = project.Name;
+        }
+        return await change(link);
     }
 
     async Task<BitwigLink> PlayLinkAsync(CancellationToken ct)
     {
-        if (_playLink is { } open) return open;
-        var link = await _main.Live.Watch.ConnectBitwigAsync(ct);
-        // An older extension takes the first parts into empty slots without playing them, so it would say it's playing
-        // while Bitwig stays silent.
-        if (!link.CanPlayAlong)
+        if (_playLink is not { } link)
         {
-            link.Dispose();
-            throw new DawLinkException(BitwigLink.NeedsTransport);
+            link = await _main.Live.Watch.ConnectBitwigAsync(ct);
+            // An older extension takes the first parts into empty slots without playing them, so it would say it's playing
+            // while Bitwig stays silent.
+            if (!link.CanPlayAlong)
+            {
+                link.Dispose();
+                throw new DawLinkException(BitwigLink.NeedsTransport);
+            }
+            _playLink = link;
         }
-        return _playLink = link;
+        // Turned on again with the link still open: the project in front now, not when it connected.
+        else if (_playProject is null) await link.HelloAsync(ct);
+        // Every change stays in that project: with another in front, a part would go on a new track there, and start it.
+        link.OnlyIn = _playProject ??= link.Hello.Project;
+        return link;
     }
 
     partial void OnPlayInBitwigChanged(bool value)
@@ -273,6 +314,8 @@ public sealed partial class PlaygroundViewModel
             FollowBitwig = false;
             StopPlaying();
             _toldPlaying = false;
+            _playProject = null;   // the one in front now
+            _paused = false;
             _ = SendToPlayAsync();
         }
         else _ = StopInBitwigAsync();
@@ -324,6 +367,7 @@ public sealed partial class PlaygroundViewModel
         if (Loop is null) channels = channels.Select(c => c with { Notes = MidiBrowserViewModel.Cut(c.Notes, 0, length) }).ToList();
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var playing = new List<string>();
+        var sent = false;
         try
         {
             var dir = ExportFolder();
@@ -345,20 +389,30 @@ public sealed partial class PlaygroundViewModel
                 File.WriteAllBytes(file, MidiWriter.Write(clip));
                 if (!_bitwigTracks.TryGetValue(name, out var track))
                     track = _bitwigTracks[name] = await BitwigNewTrack($"{name} (Playground)", limit.Token);
+                _goingAcross = track;
                 try { await BitwigPutClip(track, file, limit.Token); }
                 catch (DawLinkException e) when (e.Message.StartsWith("There's no track with ID", StringComparison.Ordinal))
                 {
                     // Its track was deleted in Bitwig: a new one.
                     track = _bitwigTracks[name] = await BitwigNewTrack($"{name} (Playground)", limit.Token);
+                    _goingAcross = track;
                     await BitwigPutClip(track, file, limit.Token);
                 }
                 _inBitwig[name] = (notes, had.Times + 1);
+                _goingAcross = null;
+                sent = true;
             }
             var gone = _inBitwig.Keys.Where(k => !playing.Contains(k)).ToList();
             if (gone.Count > 0)
             {
                 await BitwigStopTracks(gone.Select(k => _bitwigTracks[k]).ToList(), limit.Token);
                 foreach (var k in gone) _inBitwig.Remove(k);
+                sent = true;
+            }
+            if (_paused && sent && PlayInBitwig)
+            {
+                _paused = false;
+                Message = $"Playing in Bitwig again, in {StartedIn(_playProject)}.";
             }
             if (!_toldPlaying && PlayInBitwig)
             {
@@ -371,7 +425,12 @@ public sealed partial class PlaygroundViewModel
         }
         catch (DawLinkException e)
         {
-            Message = e.Message;
+            // Another project in front: nothing went there, and the parts go across again from the next edit once it's back.
+            _paused = BitwigLink.IsElsewhere(e);
+            Message = _paused
+                ? $"Playing in Bitwig is paused: another project is in front there, and the Playground's tracks are in {StartedIn(_playProject)}. " +
+                  "Go back to it and your next edit goes across, or turn Play in Bitwig off and on to play in the one in front."
+                : e.Message;
             if (e.Message == BitwigLink.NeedsTransport) PlayInBitwig = false;
             DropPlayLink();
         }
@@ -380,7 +439,10 @@ public sealed partial class PlaygroundViewModel
             Message = $"Playing in Bitwig failed: {e.Message}";
             DropPlayLink();
         }
+        finally { _goingAcross = null; }
     }
+
+    static string StartedIn(string? project) => project is { Length: > 0 } ? $"“{project}”" : "the project you started in";
 
     void DropPlayLink()
     {
@@ -406,10 +468,15 @@ public sealed partial class PlaygroundViewModel
         }
         catch (Exception e) when (e is DawLinkException or IOException or SocketException or OperationCanceledException or TimeoutException)
         {
-            Message = $"Couldn't stop the Playground's tracks in Bitwig: {e.Message}";
+            Message = e is DawLinkException d && BitwigLink.IsElsewhere(d)
+                ? $"Couldn't stop the Playground's tracks in Bitwig: they're in {StartedIn(_playProject)}, and another project is in front there."
+                : $"Couldn't stop the Playground's tracks in Bitwig: {e.Message}";
         }
         finally { DropPlayLink(); }
     }
+
+    /// <summary>How long the app waits as it closes for Bitwig to stop the clips the Playground launched there.</summary>
+    internal TimeSpan StopOnClose { get; set; } = TimeSpan.FromSeconds(1.5);
 
     void StopWithBitwig()
     {
@@ -417,6 +484,19 @@ public sealed partial class PlaygroundViewModel
         _sendSoon?.Cancel();
         _following?.Cancel();
         _followLink?.Dispose();
+        // The app is closing: the Playground's clips in Bitwig stop too, rather than play on with nothing here to stop
+        // them. Briefly, and off this thread (the window has gone by now); a Bitwig that doesn't answer is left as it is.
+        var tracks = _inBitwig.Keys.Select(k => _bitwigTracks[k]).ToList();
+        // A part still going across launches once Bitwig has it, so its track is stopped too (the stop waits behind it there).
+        if (_goingAcross is { } going && !tracks.Contains(going)) tracks.Add(going);
+        _inBitwig.Clear();
+        if (tracks.Count > 0)
+        {
+            // Not disposed: the stop may still be using it once the wait is over.
+            var limit = new CancellationTokenSource(StopOnClose);
+            try { Task.Run(() => BitwigStopTracks(tracks, limit.Token)).Wait(StopOnClose); }
+            catch (AggregateException) { }
+        }
         _playLink?.Dispose();
     }
 }

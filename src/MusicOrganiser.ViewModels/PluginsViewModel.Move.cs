@@ -47,7 +47,27 @@ public sealed partial class PluginsViewModel
                               .Concat(_oldHomes.Select(h => new CleanupItem(new SpaceFolder(h.Path, SpaceKind.Sounds, h.Bytes, []), "", ticked: true,
                                                                             label: $"{Path.GetFileName(h.Path)} ({h.Note})", detail: h.Path))).ToList(),
         };
-        card.Confirm = () => DeleteAsync(card, "");
+        var (old, homes) = (_oldCopies, _oldHomes);
+        card.Confirm = async () =>
+        {
+            // Checked again: a drive unplugged since the card opened leaves an old copy the only one the plugin can reach.
+            card.Busy = true;
+            var keep = await Task.Run(() =>
+            {
+                var moved = _db.MovedFolders();
+                return old.Where(m => !FolderMove.OldCopyCanGo(m)).Select(m => m.OldCopy)
+                          .Concat(homes.Where(h => !FolderMove.OldHomeCanGo(h, moved)).Select(h => h.Path))
+                          .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            });
+            if (Card != card) return;   // Keep was pressed while it looked
+            var kept = card.Items.Where(i => i.IsTicked && keep.Contains(i.Folder.Path)).ToList();
+            foreach (var i in kept) i.IsTicked = false;
+            if (kept.Count > 0)
+                _main.Activities.Failed(kept.Count == 1 ? $"Kept {kept[0].Name}" : $"Kept {kept.Count} of the old copies",
+                                        "A plugin still needs it: its copy on the other drive can't be found right now, or a link still points into it. " +
+                                        "Plug the drive back in, or use Find it… on Settings › Plugins.");
+            await DeleteAsync(card, "");
+        };
         card.Refresh();
         Card = card;
     }
@@ -63,13 +83,36 @@ public sealed partial class PluginsViewModel
         if (Selected is not { } p || !_rowSpace.TryGetValue(p, out var space)) return;
         var destination = await Ui.Current.PickFolder($"Move {Path.GetFileName(folder.Path)} to which folder? Pick one on another drive");
         if (destination is null) return;
-        var (admin, problem) = await Task.Run(() =>
-            FolderMove.Problem(folder.Path, destination, folder.Bytes) is { Length: > 0 } why ? (false, why) : FolderMove.CheckSwap(folder.Path));
-        if (problem.Length > 0)
+        // Measured again, whole, so the room checked for is what the copy takes: a maker's folder was measured less its
+        // plugins' own folders inside it, which move with it, and files may have come since (OneDrive ones downloaded).
+        var name = Path.GetFileName(folder.Path);
+        using var stop = new CancellationTokenSource();
+        var activity = _main.Activities.Start($"Checking {name}", "Measuring it", cancel: stop.Cancel);
+        bool admin;
+        string problem;
+        try
         {
-            _main.Activities.Failed($"Can't move {Path.GetFileName(folder.Path)} there", problem);
+            var bytes = await Task.Run(() => DiskSpace.Measure(folder.Path, stop.Token).Bytes, stop.Token);
+            folder = folder with { Bytes = bytes };
+            (admin, problem) = await Task.Run(() =>
+            {
+                if (FolderMove.Problem(folder.Path, destination, folder.Bytes, ct: stop.Token) is { Length: > 0 } why) return (false, why);
+                stop.Token.ThrowIfCancellationRequested();   // stopped while it looked: the folder isn't renamed to check it can be
+                return FolderMove.CheckSwap(folder.Path);
+            }, stop.Token);
+            stop.Token.ThrowIfCancellationRequested();   // stopped during that check: no card
+        }
+        catch (OperationCanceledException)
+        {
+            activity.Stop($"Stopped checking {name}", "Nothing was moved.");
             return;
         }
+        if (problem.Length > 0)
+        {
+            activity.Fail($"Can't move {name} there", problem);
+            return;
+        }
+        activity.Finish($"Checked {name}", $"{DiskSpace.Text(folder.Bytes)} to move");
         var target = FolderMove.Target(folder.Path, destination);
         var card = new SpaceCard(this)
         {
@@ -90,11 +133,12 @@ public sealed partial class PluginsViewModel
         var name = Path.GetFileName(folder.Path);
         using var stop = new CancellationTokenSource();
         var activity = _main.Activities.Start($"Moving {name}", $"Copying to {destination}", cancel: stop.Cancel);
-        var progress = new Progress<long>(done => activity.Report(100.0 * done / Math.Max(1, folder.Bytes),
-                                                                  $"Copied {DiskSpace.Text(done)} of {DiskSpace.Text(folder.Bytes)}"));
+        // Reported after every file: a folder of 100,000 presets would flood the window, so a few times a second.
+        var progress = new ThrottledProgress<long>(done => activity.Report(100.0 * done / Math.Max(1, folder.Bytes),
+                                                                           $"Copied {DiskSpace.Text(done)} of {DiskSpace.Text(folder.Bytes)}"));
         try
         {
-            var moved = await Task.Run(() => FolderMove.Move(folder.Path, destination, folder.Bytes, progress, stop.Token));
+            var moved = await Copying(progress, () => FolderMove.Move(folder.Path, destination, folder.Bytes, progress, stop.Token));
             SaveMoved(all => all.Where(m => !m.From.Equals(moved.From, StringComparison.OrdinalIgnoreCase))
                                 .Append(moved with { Key = key, Kind = folder.Kind }));
             activity.Finish($"Moved {name} to {Path.GetPathRoot(moved.To)}",
@@ -114,10 +158,26 @@ public sealed partial class PluginsViewModel
         await RemeasureAsync(key);
     }
 
+    /// <summary>Runs a copy in the background; once it ends, a report still on its way isn't shown over the card that follows.</summary>
+    static async Task<T> Copying<T>(ThrottledProgress<long> progress, Func<T> copy)
+    {
+        try { return await Task.Run(copy); }
+        finally { progress.Close(); }
+    }
+
     /// <summary>Delete old copy: a Keep or Delete card for the copy left beside the link.</summary>
     internal void DeleteOldCopy(MovedFolder moved)
     {
         if (!moved.HasOldCopy) return;
+        if (!FolderMove.OldCopyCanGo(moved))
+        {
+            _main.Activities.Failed($"Keeping the old copy of {Path.GetFileName(moved.From)}",
+                                    FolderMove.Replaced([moved]).Count > 0
+                                        ? "An update put a real folder back where the link was. Use Link again… on the Plugins page first."
+                                        : $"The plugin can't reach the copy in {moved.To} right now, so this is the only copy it can use. " +
+                                          "Plug the drive back in, or use Find it… on Settings › Plugins.");
+            return;
+        }
         var card = new SpaceCard(this)
         {
             Title = $"Delete the old copy of {Path.GetFileName(moved.From)}?",
@@ -128,6 +188,15 @@ public sealed partial class PluginsViewModel
         };
         card.Confirm = async () =>
         {
+            // Checked again: the drive may have gone since the card opened.
+            var canGo = await Task.Run(() => FolderMove.OldCopyCanGo(moved));
+            if (Card != card) return;   // Keep was pressed while it looked
+            if (!canGo)
+            {
+                Card = null;
+                DeleteOldCopy(moved);   // says why it stays
+                return;
+            }
             await DeleteAsync(card, "");
             if (!Directory.Exists(moved.OldCopy)) LoadMoved(moved.Key);
         };
@@ -159,10 +228,14 @@ public sealed partial class PluginsViewModel
         var name = Path.GetFileName(moved.From);
         using var stop = new CancellationTokenSource();
         var activity = _main.Activities.Start($"Moving {name} back", "", cancel: stop.Cancel);
-        var progress = new Progress<long>(done => activity.Report(100.0 * done / Math.Max(1, moved.Bytes), $"Copied {DiskSpace.Text(done)} of {DiskSpace.Text(moved.Bytes)}"));
+        var progress = new ThrottledProgress<long>(done => activity.Report(100.0 * done / Math.Max(1, moved.Bytes), $"Copied {DiskSpace.Text(done)} of {DiskSpace.Text(moved.Bytes)}"));
         try
         {
-            await Task.Run(() => FolderMove.MoveBack(moved, progress, stop.Token));
+            await Copying(progress, () =>
+            {
+                FolderMove.MoveBack(moved, progress, stop.Token);
+                return true;
+            });
         }
         catch (OperationCanceledException)
         {
@@ -256,8 +329,8 @@ public sealed partial class PluginsViewModel
             try
             {
                 var bytes = (await Task.Run(() => DiskSpace.Measure(m.From, stop.Token), stop.Token)).Bytes;
-                var progress = new Progress<long>(done => activity.Report(100.0 * done / Math.Max(1, bytes), $"{name}: copied {DiskSpace.Text(done)} of what's new"));
-                var aside = await Task.Run(() => FolderMove.LinkAgain(m, bytes, progress, stop.Token));
+                var progress = new ThrottledProgress<long>(done => activity.Report(100.0 * done / Math.Max(1, bytes), $"{name}: copied {DiskSpace.Text(done)} of what's new"));
+                var aside = await Copying(progress, () => FolderMove.LinkAgain(m, bytes, progress, stop.Token));
                 _db.SaveOldHomes(_db.OldHomes().Append(aside));
             }
             catch (OperationCanceledException)
@@ -290,10 +363,11 @@ public sealed partial class PluginsViewModel
         try
         {
             var bytes = (await Task.Run(() => DiskSpace.Measure(home, stop.Token), stop.Token)).Bytes;
-            var progress = new Progress<long>(done => activity.Report(100.0 * done / Math.Max(1, bytes), $"Copied {DiskSpace.Text(done)} of {DiskSpace.Text(bytes)}"));
+            var progress = new ThrottledProgress<long>(done => activity.Report(100.0 * done / Math.Max(1, bytes), $"Copied {DiskSpace.Text(done)} of {DiskSpace.Text(bytes)}"));
             var sameDrive = FolderMove.DriveOf(home).Equals(FolderMove.DriveOf(destination), StringComparison.OrdinalIgnoreCase);
-            var (now, problems) = await Task.Run(() => FolderMove.MoveHome(home, destination, _db.MovedFolders(), bytes, progress, stop.Token));
+            var (now, problems) = await Copying(progress, () => FolderMove.MoveHome(home, destination, _db.MovedFolders(), bytes, progress, stop.Token));
             _db.SaveMovedFolders(now);
+            // Its old place stays off the old copies card while a link still points into it (see FolderMove.OldHomeCanGo).
             if (!sameDrive) _db.SaveOldHomes(_db.OldHomes().Append(new OldHome(home, bytes)));
             var target = FolderMove.Target(home, destination);
             if (problems.Count == 0)
@@ -302,7 +376,9 @@ public sealed partial class PluginsViewModel
                                 "Show", () => Shell.Reveal(target));
             else
                 activity.Fail($"{problems.Count} of the links still point at the old place",
-                              $"{problems.First().Value} The rest point at {target}. Keep the old folder until Find it… has fixed them.");
+                              sameDrive
+                                  ? $"{problems.First().Value} The rest point at {target}. Use Find it… on Settings › Plugins and pick {target} to fix them."
+                                  : $"{problems.First().Value} The rest point at {target}. Keep the old folder until Find it… has fixed them.");
         }
         catch (OperationCanceledException)
         {

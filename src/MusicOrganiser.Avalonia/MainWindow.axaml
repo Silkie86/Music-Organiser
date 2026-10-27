@@ -68,8 +68,8 @@
                     <Button Classes="railButton flat" Command="{Binding RescanCommand}" IsVisible="{Binding !IsScanning}"
                             ToolTip.Tip="{Binding ScanStatus, StringFormat='{}{0}&#10;Click to look for new and changed projects. Right-click to re-read everything.'}">
                         <Button.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Header="Rescan everything" Command="{Binding FullRescanCommand}"
+                            <ContextMenu Opening="OnMenuOpening">
+                                <MenuItem Header="Rescan everything" Command="{Binding FullRescanCommand}" Tag="app.fullRescan"
                                           ToolTip.Tip="Re-read every project, even unchanged ones" />
                             </ContextMenu>
                         </Button.ContextMenu>

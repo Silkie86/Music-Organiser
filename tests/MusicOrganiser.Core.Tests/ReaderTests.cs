@@ -577,6 +577,24 @@ public class FlStudio9Tests
         Assert.Empty(LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(alone), alone).Taken);
     }
 
+    [Fact]
+    public void ALostSoundIsLookedForPastOlderSavesWithoutItsPluginAndAMissingFolderIsNoError()
+    {
+        // funk step_8 has other plugins, so only funk step_7 (FL 9) still has LegacyCell's sound.
+        var dir = Fixtures.TempDir();
+        File.Move(Fixtures.FlStudio9Project(dir, Chunk), Path.Combine(dir, "funk step_7.flp"));
+        File.Move(Fixtures.FlStudioProject(dir), Path.Combine(dir, "funk step_8.flp"));
+        var path = Fixtures.FlStudio25NothingSaved(dir);
+        var (song, taken) = LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(path), path);
+        Assert.Equal(Chunk, song.Channels.Single().Instrument!.State!.Data[60..]);
+        Assert.Equal("Cell: LegacyCell's sound, from funk step_7", Assert.Single(taken));
+
+        // Its folder gone since it was read: converting goes on without the older saves.
+        var lost = Readers.FlStudio.ReadSong(path);
+        var gone = Path.Combine(dir, "gone", "funk step_9.flp");
+        Assert.Same(lost, LostSounds.FromOlderSaves(lost, gone).Song);
+    }
+
     [Theory]
     [InlineData("7.0.0")]
     [InlineData(null)]   // no version: told from the notes being in time order
@@ -812,5 +830,20 @@ public class MidiWriterTests
         // At tick 96 the first note's off must come before the second note's on.
         var s = Encoding.Latin1.GetString(bytes);
         Assert.True(s.IndexOf("\x80\x3C\x00", StringComparison.Ordinal) < s.LastIndexOf("\x90\x3C\x64", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void FlStepSequencerStepsAreWrittenAsSixteenthsNotOneTick()
+    {
+        // Kicks on each beat and two hats a 32nd apart, as FL's step sequencer stores them (no length), and a played note.
+        var clip = new MidiClip { Name = "Drums", Ppq = 96 };
+        foreach (var at in new long[] { 0, 96, 192, 288 }) clip.Track("Kick").Add(new NoteEvent(at, 1, 36, 100, Step: true));
+        clip.Track("Kick").Add(new NoteEvent(0, 1, 42, 100, Step: true));
+        clip.Track("Kick").Add(new NoteEvent(12, 1, 42, 100, Step: true));
+        clip.Track("Kick").Add(new NoteEvent(0, 192, 60, 100));
+        var notes = MusicOrganiser.Core.Midi.MidiFileReader.Read(MidiWriter.Write(clip), "Drums").SelectMany(p => p.Notes).ToList();
+        Assert.All(notes.Where(n => n.Key == 36), n => Assert.Equal(24, n.Length));
+        Assert.Equal([12L, 24L], notes.Where(n => n.Key == 42).OrderBy(n => n.Start).Select(n => n.Length));   // never over the next hat
+        Assert.Equal(192, notes.Single(n => n.Key == 60).Length);
     }
 }

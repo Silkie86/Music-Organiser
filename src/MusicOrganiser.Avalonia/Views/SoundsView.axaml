@@ -164,11 +164,17 @@
                             <ListBox x:Name="TileList" Classes="tiles" ItemsSource="{Binding TileRows}" IsVisible="{Binding IsTiles}"
                                      Background="Transparent" SizeChanged="OnTilesSizeChanged" Focusable="True">
                                 <ListBox.ContextMenu>
-                                    <ContextMenu>
-                                        <MenuItem Header="Play" Command="{Binding PlayCommand}" />
-                                        <MenuItem Header="To Bitwig" Command="{Binding ToBitwigCommand}"
+                                    <!-- The same lines as the list's menu; each Tag is the action whose key it shows. -->
+                                    <ContextMenu Opening="OnSoundMenuOpening">
+                                        <MenuItem Header="Play" Command="{Binding PlayCommand}" Tag="app.play" />
+                                        <MenuItem Header="To Bitwig" Command="{Binding ToBitwigCommand}" Tag="sounds.toBitwig"
                                                   ToolTip.Tip="Puts the sound on a Sampler on a new track in the project open in Bitwig" />
-                                        <MenuItem Header="Show file" Command="{Binding RevealCommand}" />
+                                        <MenuItem Header="Favourite" Command="{Binding ToggleFavouriteCommand}" Tag="sounds.favourite"
+                                                  ToolTip.Tip="Favourite the sound, or not" />
+                                        <MenuItem Header="Add a tag…" Click="OnTagMenu" Tag="sounds.tag" />
+                                        <Separator />
+                                        <MenuItem Header="Show file" Command="{Binding RevealCommand}" Tag="sounds.reveal" />
+                                        <MenuItem Header="Copy path" Command="{Binding CopyPathCommand}" Tag="sounds.copyPath" />
                                     </ContextMenu>
                                 </ListBox.ContextMenu>
                                 <ListBox.ItemTemplate>
@@ -212,13 +218,18 @@
                             <DataGrid x:Name="SoundGrid" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
                                       AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" CanUserSortColumns="True"
                                       GridLinesVisibility="None" Background="Transparent" views:FileDrag.Source="{Binding}"
-                                      DoubleTapped="OnGridDoubleTapped">
+                                      DoubleTapped="OnGridDoubleTapped" Sorting="OnGridSorting">
                                 <DataGrid.ContextMenu>
-                                    <ContextMenu>
-                                        <MenuItem Header="Play" Command="{Binding PlayCommand}" />
-                                        <MenuItem Header="To Bitwig" Command="{Binding ToBitwigCommand}"
+                                    <ContextMenu Opening="OnSoundMenuOpening">
+                                        <MenuItem Header="Play" Command="{Binding PlayCommand}" Tag="app.play" />
+                                        <MenuItem Header="To Bitwig" Command="{Binding ToBitwigCommand}" Tag="sounds.toBitwig"
                                                   ToolTip.Tip="Puts the sound on a Sampler on a new track in the project open in Bitwig" />
-                                        <MenuItem Header="Show file" Command="{Binding RevealCommand}" />
+                                        <MenuItem Header="Favourite" Command="{Binding ToggleFavouriteCommand}" Tag="sounds.favourite"
+                                                  ToolTip.Tip="Favourite the sound, or not" />
+                                        <MenuItem Header="Add a tag…" Click="OnTagMenu" Tag="sounds.tag" />
+                                        <Separator />
+                                        <MenuItem Header="Show file" Command="{Binding RevealCommand}" Tag="sounds.reveal" />
+                                        <MenuItem Header="Copy path" Command="{Binding CopyPathCommand}" Tag="sounds.copyPath" />
                                     </ContextMenu>
                                 </DataGrid.ContextMenu>
                                 <DataGrid.Columns>
@@ -251,10 +262,10 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="Type" Width="96" Binding="{Binding Type}" x:DataType="snd:Sound" />
-                                    <DataGridTextColumn Header="Key" Width="58" Binding="{Binding Key}" x:DataType="snd:Sound" />
-                                    <DataGridTextColumn Header="BPM" Width="62" Binding="{Binding Bpm, StringFormat={}{0:0.#}}" x:DataType="snd:Sound" />
-                                    <DataGridTextColumn Header="Note" Width="62" Binding="{Binding RootNote}" x:DataType="snd:Sound" />
+                                    <DataGridTextColumn Header="Type" Width="96" SortMemberPath="Type" Binding="{Binding Type}" x:DataType="snd:Sound" />
+                                    <DataGridTextColumn Header="Key" Width="58" SortMemberPath="Key" Binding="{Binding Key}" x:DataType="snd:Sound" />
+                                    <DataGridTextColumn Header="BPM" Width="62" SortMemberPath="Bpm" Binding="{Binding Bpm, StringFormat={}{0:0.#}}" x:DataType="snd:Sound" />
+                                    <DataGridTextColumn Header="Note" Width="62" SortMemberPath="RootNote" Binding="{Binding RootNote}" x:DataType="snd:Sound" />
                                     <DataGridTextColumn Header="Length" Width="74" SortMemberPath="Seconds" x:DataType="snd:Sound"
                                                         Binding="{Binding Seconds, Converter={StaticResource Seconds}}" />
                                     <DataGridTemplateColumn Header="Character" Width="*" MinWidth="110" SortMemberPath="Character">
@@ -265,7 +276,7 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="Used" Width="62" Binding="{Binding UsedIn}" x:DataType="snd:Sound" />
+                                    <DataGridTextColumn Header="Used" Width="62" SortMemberPath="UsedIn" Binding="{Binding UsedIn}" x:DataType="snd:Sound" />
                                     <DataGridTemplateColumn Header="Folder" Width="*" MinWidth="110" SortMemberPath="Folder">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate x:DataType="snd:Sound">

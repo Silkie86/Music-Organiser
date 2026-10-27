@@ -161,11 +161,14 @@ public sealed partial class PlaygroundViewModel
 
     PlaygroundClip? _clipboard;
     string _clipboardTrack = "";
+    /// <summary>How the track it was copied from is written from the chords ("" for a part of its own).</summary>
+    string _clipboardWritten = "";
 
     void CopyClip(ClipRow row, bool cut)
     {
         _clipboard = row.Clip.Copy();
         _clipboardTrack = row.Track.Layer.Name;
+        _clipboardWritten = row.Track.Layer.Written;
         if (cut) RemoveClip(row);
         Message = $"{(cut ? "Cut" : "Copied")} {row.Clip.Name}. Paste puts it at the play marker.";
     }
@@ -178,6 +181,10 @@ public sealed partial class PlaygroundViewModel
     {
         if (_clipboard is null) return;
         var track = SelectedClip?.Track ?? SelectedLayer ?? Layers.FirstOrDefault(l => l.Layer.Name == _clipboardTrack);
+        // A track written from the chords would write over it (unless it came from one written the same way), so it goes
+        // back on the track it came from, or on a new one, as a dropped part does.
+        if (track is { IsWritten: true } && track.Layer.Written != _clipboardWritten)
+            track = Layers.FirstOrDefault(l => l.Layer.Name == _clipboardTrack && l.Layer.Written == _clipboardWritten);
         var copy = _clipboard.Copy();
         copy.Start = Cursor / Grid * Grid;
         Remember();
@@ -200,6 +207,7 @@ public sealed partial class PlaygroundViewModel
         if (!copy.Pinned) Refit(track.Layer, copy);
         track.Layer.Render();
         track.Changed();
+        SelectedLayer = track;
         SelectedClip = new ClipRow(this, track, copy);
         Changed();
     }
@@ -208,7 +216,7 @@ public sealed partial class PlaygroundViewModel
     void FindAlternatives(ClipRow row)
     {
         RightTab = SuggestTabIndex;
-        SetLoop(new RollRange(row.Clip.Start, row.Clip.End));
+        LoopOver(new RollRange(row.Clip.Start, row.Clip.End));
         Message = $"Parts that could replace {row.Clip.Name}: Swap in puts one there instead.";
     }
 

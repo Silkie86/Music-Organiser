@@ -59,7 +59,10 @@ public sealed partial class FlStudioReader
                 ? $"{channel}: Serum swapped for Serum 2, with its sound translated."
                 : $"{channel}: Serum swapped for Serum 2, with its sound translated (only roughly: {Serum1To2.Describe(result.Rough)}).");
         }
-        return new SerumSwap(swapped > 0 ? Rewrite(raw, stream, changes) : raw, swapped, notes, originals);
+        if (swapped == 0) return new SerumSwap(raw, 0, notes, originals);
+        var data = Rewrite(raw, stream, changes);
+        SameApartFrom(stream, ReadEvents(data), changes);
+        return new SerumSwap(data, swapped, notes, originals);
     }
 
     /// <summary>

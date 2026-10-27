@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
+using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Core.Tests;
 
@@ -88,6 +89,32 @@ public class DawWatchTests
         states = await PollUntil(watch, s => !s[0].Answering);
         Assert.Equal(new DawState(DawState.Bitwig, false, false), states[0]);
         Assert.True(states[1].Answering);
+    }
+
+    [Fact]
+    public async Task ShowsWhyPartOfBitwigsExtensionDidntStart()
+    {
+        // When part of Bitwig's API doesn't start, the extension greets with what it knows: no project, and why.
+        await using var server = new FakeJavaBitwig("""
+            {"link":3,"product":"Bitwig Studio","version":"6.1.3","api":23,"platform":"WINDOWS","port":19791,"onlyIn":true,"runtime":"java","extension":"3.18","loopback":false,"error":"The Bitwig extension failed: java.lang.NullPointerException"}
+            """);
+        using var watch = new DawWatch(server.Port, flOpen: () => false, bitwigOpen: () => true) { Retry = TimeSpan.Zero };
+        var bitwig = (await watch.PollAsync())[0];
+        Assert.True(bitwig.Answering);
+        Assert.Equal("Bitwig Studio 6.1.3", bitwig.Version);
+        Assert.Equal("", bitwig.Project);
+        Assert.Equal("The Bitwig extension failed: java.lang.NullPointerException", bitwig.Problem);
+
+        // It can't say more when asked hello, so it isn't asked, and stays as it greeted rather than seeming to come and go.
+        Assert.Equal(bitwig, (await watch.PollAsync())[0]);
+        Assert.Empty(server.Requests);
+
+        // The sidebar says so, rather than showing a new, unsaved project.
+        var row = new LiveDawRow(DawState.Bitwig, null!);
+        row.Show(bitwig, null);
+        Assert.True(row.Answering);
+        Assert.Equal("Linked, but not working fully", row.Text);
+        Assert.Contains("Bitwig said: The Bitwig extension failed", row.Tip);
     }
 
     /// <summary>Asks the DAWs (as the app does every couple of seconds) until they show what's expected.</summary>

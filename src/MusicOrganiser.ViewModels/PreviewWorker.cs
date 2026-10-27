@@ -124,6 +124,8 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
         }
         lock (_gate)
         {
+            // One asked for and not started yet is never played now: the sweep's timings stop waiting for it.
+            if (_want is { } superseded && superseded != path) MusicOrganiser.Core.SweepTiming.Dropped(superseded);
             _want = path;
             _stop = stop;
             if (_running) return;
@@ -171,6 +173,7 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
         }
         catch (Exception e) when (path is not null)
         {
+            MusicOrganiser.Core.SweepTiming.Dropped(path);
             if (_ui is null) failed(path, e);
             else _ui.Post(_ => failed(path, e), null);
         }

@@ -566,22 +566,66 @@ public sealed class GalaxyCanvas : Control
         if (e.Key is Key.OemPlus or Key.Add) { ZoomBy(1.6); e.Handled = true; return; }
         if (e.Key is Key.OemMinus or Key.Subtract) { ZoomBy(1 / 1.6); e.Handled = true; return; }
         if (dir is not { } d || _all.Length == 0) return;
-        // Arrow keys hop to the nearest star in that direction (within a 45° cone) and preview it.
         var from = Selected is { } sel && _byId.TryGetValue(sel.Id, out var cur) ? cur : null;
-        GalaxyStar? next;
-        if (from is null) next = _all.Where(s => s.Shown).MinBy(s => Math.Abs(s.X - _cx) + Math.Abs(s.Y - _cy));
-        else
-            next = _all.Where(s => s.Shown && s != from)
-                .Select(s => (s, dx: s.X - from.X, dy: s.Y - from.Y))
-                .Where(t => t.dx * d.X + t.dy * d.Y > Math.Abs(t.dx * d.Y - t.dy * d.X))
-                .MinBy(t => Math.Sqrt(t.dx * t.dx + t.dy * t.dy) * (1 + 0.6 * Math.Abs(t.dx * d.Y - t.dy * d.X) / Math.Max(1e-6, Math.Sqrt(t.dx * t.dx + t.dy * t.dy))))
-                .s;
+        var next = NextStar(from, d.X, d.Y);
         e.Handled = true;
         if (next is null) return;
         Selected = next.Sound;
         if (!OnScreen(next, -40)) FlyTo(next.X, next.Y, _tz);
         Sweep(next);
         InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Where an arrow key (<paramref name="dx"/>, <paramref name="dy"/>) hops from <paramref name="from"/>: the nearest shown
+    /// star that way, within a 45° cone, the ones straight ahead counting as nearer. With none picked, the one nearest the
+    /// middle of the view.
+    /// </summary>
+    internal GalaxyStar? NextStar(GalaxyStar? from, double dx, double dy)
+    {
+        if (from is null) return Nearest(_cx, _cy, s => Math.Abs(s.X - _cx) + Math.Abs(s.Y - _cy));
+        return Nearest(from.X, from.Y, s =>
+        {
+            if (s == from) return null;
+            double x = s.X - from.X, y = s.Y - from.Y;
+            double along = x * dx + y * dy, across = Math.Abs(x * dy - y * dx);
+            if (along <= across) return null;
+            var distance = Math.Sqrt(x * x + y * y);
+            return distance * (1 + 0.6 * across / Math.Max(1e-6, distance));
+        }, (cx, cy) => cx * dx + cy * dy >= 0);
+    }
+
+    /// <summary>
+    /// The shown star with the lowest <paramref name="score"/> (null leaves a star out), looked for in the grid squares ring
+    /// by ring out from (x, y), and only as far as a nearer one could be: a score is never less than the star's distance
+    /// from (x, y). <paramref name="ahead"/> leaves out squares (by how many across and down they are) that can't hold one.
+    /// A held arrow key on a 357,000-star galaxy went over every star each time, on the window's thread.
+    /// </summary>
+    GalaxyStar? Nearest(double x, double y, Func<GalaxyStar, double?> score, Func<int, int, bool>? ahead = null)
+    {
+        int fx = Cell(x), fy = Cell(y);
+        var rings = Math.Max(Math.Max(fx, Grid - 1 - fx), Math.Max(fy, Grid - 1 - fy));
+        GalaxyStar? best = null;
+        var bestScore = double.MaxValue;
+        for (var k = 0; k <= rings; k++)
+        {
+            if (bestScore <= (k - 1) / (double)Grid) break;   // every star from this ring on is at least that far
+            for (var cy = Math.Max(0, fy - k); cy <= Math.Min(Grid - 1, fy + k); cy++)
+            {
+                var whole = cy == fy - k || cy == fy + k;   // the ring's top and bottom rows; between them, just its two ends
+                for (var cx = fx - k; cx <= fx + k; cx += whole || k == 0 ? 1 : 2 * k)
+                {
+                    if (cx < 0 || cx >= Grid || ahead?.Invoke(cx - fx, cy - fy) == false) continue;
+                    var c = cy * Grid + cx;
+                    for (var j = _cellStart[c]; j < _cellStart[c + 1]; j++)
+                    {
+                        var s = _all[_cellItems[j]];
+                        if (s.Shown && score(s) is { } v && v < bestScore) (best, bestScore) = (s, v);
+                    }
+                }
+            }
+        }
+        return best;
     }
 
     GalaxyStar? HitTest(Point p)

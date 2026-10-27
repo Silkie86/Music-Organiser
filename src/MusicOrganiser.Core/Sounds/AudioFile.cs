@@ -58,20 +58,30 @@ public static class AudioFile
         lock (Extra) return Extra.ContainsKey(ext);
     }
 
-    public static AudioData Read(string path, double maxSeconds = MaxSeconds)
+    public static AudioData Read(string path, double maxSeconds = MaxSeconds) => Read(path, maxSeconds, fromFrame: 0);
+
+    /// <summary>Whether <see cref="Read(string, double, long)"/> can start part way into this file: WAV and AIFF, read here.</summary>
+    public static bool CanReadFrom(string path) => Path.GetExtension(path).ToLowerInvariant() is ".wav" or ".aif" or ".aiff" or ".aifc";
+
+    /// <summary>
+    /// Up to <paramref name="maxSeconds"/> of audio starting <paramref name="fromFrame"/> frames in, so a long file can be
+    /// gone through a part at a time (see <see cref="CanReadFrom"/>; other formats only from the start).
+    /// </summary>
+    public static AudioData Read(string path, double maxSeconds, long fromFrame)
     {
-        var ext = Path.GetExtension(path).ToLowerInvariant();
-        if (ext is ".wav" or ".aif" or ".aiff" or ".aifc")
+        if (CanReadFrom(path))
         {
             using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             var head = new byte[4];
             fs.ReadExactly(head);
             fs.Position = 0;
             var magic = Encoding.ASCII.GetString(head);
-            if (magic is "RIFF" or "RF64") return ReadWav(fs, maxSeconds);
-            if (magic == "FORM") return ReadAiff(fs, maxSeconds);
+            if (magic is "RIFF" or "RF64") return ReadWav(fs, maxSeconds, fromFrame);
+            if (magic == "FORM") return ReadAiff(fs, maxSeconds, fromFrame);
             throw new InvalidDataException("Not a WAV or AIFF file");
         }
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        if (fromFrame > 0) throw new NotSupportedException($"{ext} files are only read from the start");
         Func<string, double, AudioData>? decoder;
         lock (Extra) Extra.TryGetValue(ext, out decoder);
         return decoder?.Invoke(path, maxSeconds) ?? throw new NotSupportedException($"No decoder for {ext} files");
@@ -79,7 +89,7 @@ public static class AudioFile
 
     // ---- WAV --------------------------------------------------------------------
 
-    static AudioData ReadWav(Stream s, double maxSeconds)
+    static AudioData ReadWav(Stream s, double maxSeconds, long fromFrame)
     {
         var r = new BinaryReader(s);
         r.ReadBytes(12);  // RIFF, size, WAVE
@@ -141,8 +151,9 @@ public static class AudioFile
         if (bytesPerSample == 0) throw new InvalidDataException("Unsupported WAV bit depth");
         var frameBytes = bytesPerSample * channels;
         var totalFrames = dataLength / frameBytes;
-        var frames = (int)Math.Min(totalFrames, (long)(maxSeconds * rate));
-        s.Position = dataStart;
+        var start = Math.Clamp(fromFrame, 0, totalFrames);
+        var frames = Frames(totalFrames - start, maxSeconds * rate, frameBytes);
+        s.Position = dataStart + start * frameBytes;
         var raw = new byte[frames * frameBytes];
         var read = s.ReadAtLeast(raw, raw.Length, throwOnEndOfStream: false);
         frames = read / frameBytes;
@@ -159,7 +170,7 @@ public static class AudioFile
 
     // ---- AIFF -------------------------------------------------------------------
 
-    static AudioData ReadAiff(Stream s, double maxSeconds)
+    static AudioData ReadAiff(Stream s, double maxSeconds, long fromFrame)
     {
         var buf = new byte[12];
         s.ReadExactly(buf);
@@ -212,13 +223,21 @@ public static class AudioFile
 
         var bytesPerSample = (bits + 7) / 8;
         var frameBytes = bytesPerSample * channels;
-        var frames = (int)Math.Min(totalFrames, (long)(maxSeconds * rate));
-        s.Position = dataStart;
+        var start = Math.Clamp(fromFrame, 0, totalFrames);
+        var frames = Frames(totalFrames - start, maxSeconds * rate, frameBytes);
+        s.Position = dataStart + start * frameBytes;
         var raw = new byte[frames * frameBytes];
         frames = s.ReadAtLeast(raw, raw.Length, throwOnEndOfStream: false) / frameBytes;
         var data = Decode(raw, frames, channels, bytesPerSample, isFloat, bigEndian: !littleEndian);
         return new AudioData { SampleRate = (int)Math.Round(rate), Channels = data, FileSeconds = totalFrames / rate, EmbeddedRootNote = root };
     }
+
+    /// <summary>
+    /// How many frames to decode: what's left, up to <paramref name="wanted"/>, and never more than one array can hold
+    /// (worked out in long: a 20 minute, 96 kHz, 6 channel, 32-bit file is over 2 GB, past what an int holds).
+    /// </summary>
+    static int Frames(long left, double wanted, int frameBytes) =>
+        (int)Math.Max(0, Math.Min(Math.Min(left, (long)wanted), Array.MaxLength / frameBytes));
 
     /// <summary>80-bit IEEE extended float, used for AIFF sample rates.</summary>
     static double Extended80(ReadOnlySpan<byte> b)
