@@ -17,6 +17,10 @@ public sealed partial class LibraryDb
         );
         CREATE INDEX IF NOT EXISTS ix_scanned_plugins_path ON scanned_plugins(path);
         CREATE INDEX IF NOT EXISTS ix_scanned_plugins_key ON scanned_plugins(name_key);
+        CREATE TABLE IF NOT EXISTS plugin_ids (
+            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE, name_key TEXT, plugin_id TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ix_plugin_ids_project ON plugin_ids(project_id, name_key);
         """;
 
     /// <summary>The size and modified time each plugin file had when it was last read.</summary>

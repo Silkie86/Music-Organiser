@@ -87,7 +87,6 @@ public sealed partial class LibraryDb : IDisposable
         Exec(Schema);
         Exec(PluginScanSchema);
         Exec(SpaceSchema);
-        AddColumn("plugins", "plugin_id", "TEXT NOT NULL DEFAULT ''");
         AddColumn("projects", "detected_key", "TEXT");
         AddColumn("projects", "created", "INTEGER");
         AddColumn("projects", "note_count", "INTEGER");
@@ -340,7 +339,8 @@ public sealed partial class LibraryDb : IDisposable
             cmd.Transaction = tx;
             id = (long)cmd.ExecuteScalar()!;
         }
-        foreach (var sql in new[] { "DELETE FROM plugins WHERE project_id = $id", "DELETE FROM samples WHERE project_id = $id" })
+        foreach (var sql in new[] { "DELETE FROM plugins WHERE project_id = $id", "DELETE FROM plugin_ids WHERE project_id = $id",
+                                    "DELETE FROM samples WHERE project_id = $id" })
         {
             using var cmd = Cmd(sql, ("$id", id));
             cmd.Transaction = tx;
@@ -349,14 +349,15 @@ public sealed partial class LibraryDb : IDisposable
         foreach (var p in info?.Plugins ?? [])
         {
             var key = NameKey(p.Name);
-            using var cmd = Cmd("""
-                INSERT INTO plugins (project_id, name, name_key, vendor, kind, format, path, installed, plugin_id)
-                VALUES ($id, $n, $k, $v, $kind, $f, $path, $inst, $pid)
-                """,
+            using var cmd = Cmd("INSERT INTO plugins VALUES ($id, $n, $k, $v, $kind, $f, $path, $inst)",
                 ("$id", id), ("$n", p.Name), ("$k", key), ("$v", p.Vendor), ("$kind", (int)p.Kind),
-                ("$f", p.Format), ("$path", p.Path), ("$inst", IsInstalled(p, key, installed) ? 1 : 0), ("$pid", p.Id));
+                ("$f", p.Format), ("$path", p.Path), ("$inst", IsInstalled(p, key, installed) ? 1 : 0));
             cmd.Transaction = tx;
             cmd.ExecuteNonQuery();
+            if (p.Id.Length == 0) continue;
+            using var ids = Cmd("INSERT INTO plugin_ids (project_id, name_key, plugin_id) VALUES ($id, $k, $pid)", ("$id", id), ("$k", key), ("$pid", p.Id));
+            ids.Transaction = tx;
+            ids.ExecuteNonQuery();
         }
         foreach (var (path, found) in f.Samples)
         {
@@ -534,7 +535,11 @@ public sealed partial class LibraryDb : IDisposable
     public void RefreshInstalledFlags()
     {
         var installed = InstalledKeys();
-        var rows = Query("SELECT rowid, name, name_key, vendor, kind, format, path, installed, plugin_id FROM plugins",
+        var rows = Query("""
+            SELECT rowid, name, name_key, vendor, kind, format, path, installed,
+                   (SELECT plugin_id FROM plugin_ids i WHERE i.project_id = plugins.project_id AND i.name_key = plugins.name_key) AS plugin_id
+            FROM plugins
+            """,
             r => (RowId: (long)r["rowid"], Key: NameKey(Str(r, "name")), Was: Long(r, "installed") != 0,
                   Ref: new PluginRef(Str(r, "name"), Str(r, "vendor"), (PluginKind)Long(r, "kind"), Str(r, "format"), Str(r, "path"),
                                      Str(r, "plugin_id"))));

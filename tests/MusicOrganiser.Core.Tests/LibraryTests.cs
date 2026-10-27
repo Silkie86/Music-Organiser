@@ -669,6 +669,20 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void An_older_build_of_the_app_can_still_save_plugins_into_the_library_this_one_opened()
+    {
+        // Solomon switches between test builds on the same library. Older ones write a project's plugins without naming the
+        // columns, so a column added to plugins (the plugins' IDs, say) would fail their every scan: the IDs have a table of their own.
+        var file = Path.Combine(_root, "Old.song");
+        _db.Upsert(new LibraryDb.IndexedFile(file, 1, 100, null, null, [], []));
+        using var sql = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_db.FilePath}");
+        sql.Open();
+        using var cmd = sql.CreateCommand();
+        cmd.CommandText = "INSERT INTO plugins VALUES ((SELECT id FROM projects WHERE name = 'Old'), 'Pro EQ', 'proeq', '', 2, 'Native', '', 1)";
+        Assert.Equal(1, cmd.ExecuteNonQuery());
+    }
+
+    [Fact]
     public void FindsLocalMatchesForMissingSamples()
     {
         // Outside the projects' folders: a sample in a project's folder tree counts as found.
