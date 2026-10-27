@@ -374,6 +374,28 @@ public class StudioOneTests
         var preset = Assert.Single(r.ExtractPresets(_path));
         Assert.Equal(("Inst 1", "Diva", ".vstpreset"), (preset.Name, preset.Plugin, preset.Extension));
     }
+
+    [Fact]
+    public void Reads_each_insert_as_the_plugin_it_holds_with_its_ID_rather_than_the_name_it_shows()
+    {
+        // Solomon's "Click Clack" (27 Oct 2026): Studio One numbers a plugin's second insert ("FabFilter Pro-Q 2 2") and keeps
+        // the name an insert first had after Waves renamed the plugin ("TG12345 Stereo"). Read by those, and with Studio One's
+        // own effects not known as its own, 12 of its 27 plugins showed as missing.
+        var info = new StudioOneReader().Read(Fixtures.StudioOneInserts(Fixtures.TempDir()));
+
+        Assert.Equal(
+        [
+            ("Abbey Road EMI TG12345 Ch Stereo", PluginKind.Effect, "VST3", "56535454473553746731323334352073"),
+            ("Arpeggiator", PluginKind.NoteEffect, "Native", "BDD2D6E5381941B4BF917B832DAAFA0B"),
+            ("FabFilter Pro-Q 2", PluginKind.Effect, "VST2", "FQ2p"),   // a VST2's four letters, as the plugin scanner gives them
+            ("Gate", PluginKind.Effect, "Native", "132C0E1F06FD4C96BD65678C04FE1C92"),
+            ("Impact", PluginKind.Instrument, "Native", "3713E26C2FCA40249F2517E9D2BE2B9B"),
+            ("Kontakt 5 16out", PluginKind.Instrument, "VST2", "NiO7"),
+            ("Kramer Tape Stereo", PluginKind.Effect, "VST3", "565354544150536B72616D6572207461"),
+            ("Pro EQ", PluginKind.Effect, "Native", "D9AE9ACD69B44B43B8D5983E39C559A5"),
+        ], info.Plugins.Select(p => (p.Name, p.Kind, p.Format, p.Id)).OrderBy(p => p.Name, StringComparer.Ordinal));
+        Assert.All(info.Plugins, p => Assert.Equal("", p.Path));
+    }
 }
 
 public class FlStudio25Tests
