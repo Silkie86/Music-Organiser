@@ -242,6 +242,10 @@ public sealed partial class SoundsViewModel
         return regions.OrderByDescending(r => r.Count).Take(16).ToList();
     }
 
+    /// <summary>How long background work holds back after each swept star, and after letting go.</summary>
+    public static TimeSpan SweepQuiet { get; set; } = TimeSpan.FromSeconds(3);
+    public static TimeSpan SweepQuietAfter { get; set; } = TimeSpan.FromSeconds(1);
+
     PreviewWorker? _previews;
     /// <summary>Sweep previews start off the UI thread, so the mouse never waits for a file to open.</summary>
     PreviewWorker Previews => _previews ??= new PreviewWorker(_player,
@@ -255,6 +259,8 @@ public sealed partial class SoundsViewModel
     void Sweep(Sound? s)
     {
         if (s is null) return;
+        // Scans and Deep listen hold back while you sweep, so the next star's file opens straight away.
+        Core.Parallelism.QuietFor(SweepQuiet);
         _preview = s.Path;
         Previews.Play(s.Path);
         _clock.Start();
@@ -272,6 +278,7 @@ public sealed partial class SoundsViewModel
     [RelayCommand]
     void EndSweep()
     {
+        Core.Parallelism.QuietFor(SweepQuietAfter);
         if (_preview is null) return;
         Previews.Stop();
         _preview = null;
@@ -281,6 +288,7 @@ public sealed partial class SoundsViewModel
     [RelayCommand]
     void PickStar(Sound? s)
     {
+        Core.Parallelism.QuietFor(SweepQuietAfter);   // the press began a sweep; a click ends it
         if (s is null) return;
         Selected = s;
         try
