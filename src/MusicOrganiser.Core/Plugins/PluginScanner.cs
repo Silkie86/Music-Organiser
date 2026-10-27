@@ -6,8 +6,8 @@ using System.Text.Json.Nodes;
 
 namespace MusicOrganiser.Core.Plugins;
 
-/// <summary>What the scanner found in one plugin file.</summary>
-public sealed record PluginFileScan(string Path, IReadOnlyList<ScannedPlugin> Plugins, string Error = "");
+/// <summary>What the scanner found in one plugin file. <paramref name="TimedOut"/>: stopped by the time limit.</summary>
+public sealed record PluginFileScan(string Path, IReadOnlyList<ScannedPlugin> Plugins, string Error = "", bool TimedOut = false);
 
 /// <summary>A plugin file's size and modified time, to tell when it needs reading again.</summary>
 public readonly record struct PluginStamp(long Size, long Modified);
@@ -230,7 +230,7 @@ public sealed class PluginScanner
             error = (plugins.Count > 0 ? "the scanner crashed part way through" : "the plugin crashed the scanner") +
                     (detail.Length > 0 ? $": {detail}" : $" (code {process.ExitCode})");
         }
-        return new(path, plugins, error);
+        return new(path, plugins, error, timedOut);
     }
 
     /// <summary>

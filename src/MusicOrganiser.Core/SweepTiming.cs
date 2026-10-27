@@ -12,6 +12,7 @@ public static class SweepTiming
 {
     const double Every = 10;   // seconds between notes
     const double StaleMs = 2000;   // no sweep keeps a star waiting this long
+    const double LostMs = 30_000;   // asked for this long ago and never started: dropped without a word, say
 
     static readonly object Gate = new();
     // Each sound on its way: when the mouse reached its star, how late the app heard about that move, when it was asked for.
@@ -41,10 +42,11 @@ public static class SweepTiming
         lock (Gate)
         {
             var now = Stopwatch.GetTimestamp();
-            // A long sweep's passed stars that never played: drop those, never one already asked for or being opened.
+            // A long sweep's passed stars that never played: drop those, never one asked for just now or being opened.
+            // One asked for long ago that never started is gone too, so the list can't grow all session.
             if (Pending.Count > 64)
                 foreach (var (key, old) in Pending.ToList())
-                    if (old.Asked == 0) Pending.Remove(key);
+                    if (old.Asked == 0 || Ms(old.Asked, now) > LostMs) Pending.Remove(key);
             // Reached again before it was asked for: it waits from now, not from the first pass (seconds ago, perhaps).
             if (!Pending.TryGetValue(path, out var p) || p.Asked == 0)
                 Pending[path] = (now, Math.Max(0, inputMs), 0, 0);
@@ -61,6 +63,12 @@ public static class SweepTiming
             // Counted from the old pass, one such star once read as a 42 s wait and made a 10 s average 1.8 s.
             Pending[path] = Pending.TryGetValue(path, out var p) && Ms(p.Reached, now) < StaleMs ? p with { Asked = now } : (now, 0, now, 0);
         }
+    }
+
+    /// <summary>It won't be heard after all: a newer preview took its place before it started, or it couldn't be played.</summary>
+    public static void Dropped(string path)
+    {
+        lock (Gate) Pending.Remove(path);
     }
 
     /// <summary>The preview thread is opening it now.</summary>

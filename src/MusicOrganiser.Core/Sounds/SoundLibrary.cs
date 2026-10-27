@@ -106,6 +106,13 @@ public sealed partial class SoundLibrary : IDisposable
         );
         """;
 
+    // Indexes this version added, which take a while to build over a big library the first time (see BuildNewIndexes).
+    const string NewIndexes = """
+        -- Forgetting a sound clears its rows here too: without these, each one read every row of both tables.
+        CREATE INDEX IF NOT EXISTS ix_sound_maps_sound ON sound_maps(sound_id);
+        CREATE INDEX IF NOT EXISTS ix_sound_events_sound ON sound_events(sound_id);
+        """;
+
     // The galaxy kept one map before each kind of placing had its own: it moves across under the kind it was made from.
     const string MoveOldMap = """
         INSERT OR IGNORE INTO sound_maps
@@ -136,6 +143,17 @@ public sealed partial class SoundLibrary : IDisposable
         Exec(Schema);
         if (Query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sound_map'", r => (string)r["name"]).Any())
             Exec(MoveOldMap);
+    }
+
+    /// <summary>
+    /// Builds the indexes this version added, if the library doesn't have them yet. The app calls it in the background
+    /// once the window shows, so the first build over hundreds of thousands of galaxy places doesn't pass with nothing on
+    /// screen.
+    /// </summary>
+    public void BuildNewIndexes()
+    {
+        lock (_lock)
+            if (!_disposed) Exec(NewIndexes);
     }
 
     // Under the lock, so a query still running on a background task (say, Settings looking for the DAW scripts) finishes
@@ -256,46 +274,63 @@ public sealed partial class SoundLibrary : IDisposable
 
     public void SetClap(long id, float[] v) => Exec("UPDATE sounds SET clap = $c WHERE id = $id", ("$c", ToBlob(v)), ("$id", id));
 
-    /// <summary>Forgets samples that are no longer in your sample folders.</summary>
     /// <summary>The size and modified time stored for one file, or null when it isn't in the library.</summary>
     public (long Mtime, long Size)? KnownFile(string path) =>
         Query("SELECT mtime, size FROM sounds WHERE path = $p", r => (Long(r, "mtime"), Long(r, "size")), ("$p", path))
             .Select(t => ((long, long)?)t).FirstOrDefault();
 
     /// <summary>Forgets these files (deleted or moved away); returns how many were in the library.</summary>
-    public int Remove(IEnumerable<string> paths)
-    {
-        var removed = 0;
-        lock (_lock)
-        {
-            using var tx = _conn.BeginTransaction();
-            foreach (var path in paths)
-            {
-                using var cmd = Cmd("DELETE FROM sounds WHERE path = $p", ("$p", path));
-                cmd.Transaction = tx;
-                removed += cmd.ExecuteNonQuery();
-            }
-            tx.Commit();
-        }
-        return removed;
-    }
+    public int Remove(IEnumerable<string> paths) =>
+        InBatches(paths, "DELETE FROM sounds WHERE path = $p", ["$p"], (path, p) => p[0].Value = path);
 
+    /// <summary>
+    /// Sounds whose files were renamed or moved (see <see cref="SoundOrganiser.Moves"/>): each keeps its row, so its tags,
+    /// rating, favourite, your type, plays and galaxy place stay with it. Returns how many moved. Its listening stays too;
+    /// <see cref="SoundOrganiser.SameHints"/> says when the new name means it should be listened to again.
+    /// </summary>
+    public int Move(IEnumerable<(string From, string To)> moves) =>
+        InBatches(moves, "UPDATE sounds SET path = $to, name_type = $n WHERE path = $from", ["$from", "$to", "$n"], (m, p) =>
+        {
+            p[0].Value = m.From;
+            p[1].Value = m.To;
+            p[2].Value = (object?)SoundTypes.FromPath(m.To) ?? DBNull.Value;   // the type its new name or folder says
+        });
+
+    /// <summary>Forgets samples that are no longer in your sample folders.</summary>
     public int RemoveMissing(IReadOnlySet<string> present, Func<string, bool>? keep = null)
     {
         var gone = Query("SELECT id, path FROM sounds", r => ((long)r["id"], (string)r["path"]))
             .Where(t => !present.Contains(t.Item2) && keep?.Invoke(t.Item2) != true).Select(t => t.Item1).ToList();
-        lock (_lock)
-        {
-            using var tx = _conn.BeginTransaction();
-            foreach (var id in gone)
-            {
-                using var cmd = Cmd("DELETE FROM sounds WHERE id = $id", ("$id", id));
-                cmd.Transaction = tx;
-                cmd.ExecuteNonQuery();
-            }
-            tx.Commit();
-        }
+        InBatches(gone, "DELETE FROM sounds WHERE id = $id", ["$id"], (id, p) => p[0].Value = id);
         return gone.Count;
+    }
+
+    /// <summary>
+    /// Runs one statement for each value, a few hundred to a transaction, letting go of the database between them, so
+    /// a play or a favourite clicked meanwhile isn't kept waiting for a whole pack to go. Returns the rows changed.
+    /// </summary>
+    int InBatches<T>(IEnumerable<T> values, string sql, string[] names, Action<T, SqliteParameter[]> fill, int size = 500)
+    {
+        var changed = 0;
+        using var e = values.GetEnumerator();
+        var more = e.MoveNext();
+        while (more)
+        {
+            lock (_lock)
+            {
+                using var tx = _conn.BeginTransaction();
+                using var cmd = Cmd(sql);
+                cmd.Transaction = tx;
+                var p = names.Select(n => cmd.Parameters.Add(new SqliteParameter(n, null))).ToArray();
+                for (var n = 0; more && n < size; n++, more = e.MoveNext())
+                {
+                    fill(e.Current, p);
+                    changed += cmd.ExecuteNonQuery();
+                }
+                tx.Commit();
+            }
+        }
+        return changed;
     }
 
     // ---- reading -----------------------------------------------------------------
@@ -393,27 +428,30 @@ public sealed partial class SoundLibrary : IDisposable
               r => ((long)r["sound_id"], new StarPoint((float)(double)r["x"], (float)(double)r["y"])), ("$s", space))
             .ToDictionary(t => t.Item1, t => t.Item2);
 
-    /// <summary>Saves galaxy positions for one kind of placing; <paramref name="replace"/> throws its old map away first (a fresh layout).</summary>
+    /// <summary>
+    /// Saves galaxy positions for one kind of placing; <paramref name="replace"/> throws away its old places that the new
+    /// map hasn't got (a fresh layout). Written a few hundred at a time, letting go of the database between them: a fresh
+    /// layout of 357,000 sounds held it for seconds, and a sound played meanwhile waited.
+    /// </summary>
     public void SaveMap(string space, IReadOnlyDictionary<long, StarPoint> points, bool replace)
     {
-        lock (_lock)
+        // Every new place written over the old one, then the old ones left over gone, so the map is never empty meanwhile.
+        InBatches(points, "INSERT OR REPLACE INTO sound_maps SELECT $s, $id, $x, $y WHERE EXISTS (SELECT 1 FROM sounds WHERE id = $id)",
+                  ["$s", "$id", "$x", "$y"], (point, p) =>
+                  {
+                      p[0].Value = space;
+                      p[1].Value = point.Key;
+                      p[2].Value = (double)point.Value.X;
+                      p[3].Value = (double)point.Value.Y;
+                  });
+        if (!replace) return;
+        var stale = Query("SELECT sound_id FROM sound_maps WHERE space = $s", r => (long)r["sound_id"], ("$s", space))
+            .Where(id => !points.ContainsKey(id));
+        InBatches(stale, "DELETE FROM sound_maps WHERE space = $s AND sound_id = $id", ["$s", "$id"], (id, p) =>
         {
-            using var tx = _conn.BeginTransaction();
-            if (replace)
-            {
-                using var clear = Cmd("DELETE FROM sound_maps WHERE space = $s", ("$s", space));
-                clear.Transaction = tx;
-                clear.ExecuteNonQuery();
-            }
-            foreach (var (id, p) in points)
-            {
-                using var cmd = Cmd("INSERT OR REPLACE INTO sound_maps SELECT $s, $id, $x, $y WHERE EXISTS (SELECT 1 FROM sounds WHERE id = $id)",
-                                    ("$s", space), ("$id", id), ("$x", (double)p.X), ("$y", (double)p.Y));
-                cmd.Transaction = tx;
-                cmd.ExecuteNonQuery();
-            }
-            tx.Commit();
-        }
+            p[0].Value = space;
+            p[1].Value = id;
+        });
     }
 
     /// <summary>Vectors for every sound in a space: "features" (always) or "clap" (when the model has run).</summary>
@@ -435,22 +473,15 @@ public sealed partial class SoundLibrary : IDisposable
             WHERE id = $id
             """, ("$t", type), ("$id", id));
 
-    /// <summary>Stores the shown type for many sounds at once (after the classifier runs).</summary>
-    public void SetTypes(IEnumerable<(long Id, string Type, string Source, double Confidence)> types)
-    {
-        lock (_lock)
+    /// <summary>Stores the shown type for many sounds at once (after the classifier runs), a few hundred at a time.</summary>
+    public void SetTypes(IEnumerable<(long Id, string Type, string Source, double Confidence)> types) =>
+        InBatches(types, "UPDATE sounds SET type = $t, type_source = $s, type_conf = $c WHERE id = $id", ["$t", "$s", "$c", "$id"], (u, p) =>
         {
-            using var tx = _conn.BeginTransaction();
-            foreach (var (id, type, source, conf) in types)
-            {
-                using var cmd = Cmd("UPDATE sounds SET type = $t, type_source = $s, type_conf = $c WHERE id = $id",
-                    ("$t", type), ("$s", source), ("$c", conf), ("$id", id));
-                cmd.Transaction = tx;
-                cmd.ExecuteNonQuery();
-            }
-            tx.Commit();
-        }
-    }
+            p[0].Value = u.Type;
+            p[1].Value = u.Source;
+            p[2].Value = u.Confidence;
+            p[3].Value = u.Id;
+        });
 
     public void SetFavourite(long id, bool fav) => Exec("UPDATE sounds SET favourite = $f WHERE id = $id", ("$f", fav ? 1 : 0), ("$id", id));
     public void SetRating(long id, int rating) => Exec("UPDATE sounds SET rating = $r WHERE id = $id", ("$r", rating), ("$id", id));

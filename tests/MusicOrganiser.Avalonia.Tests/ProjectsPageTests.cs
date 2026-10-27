@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using MusicOrganiser.Core.Library;
@@ -181,6 +182,46 @@ public sealed class ProjectsPageTests : IDisposable
         var toolbar = view.FindControl<ToolbarPanel>("Toolbar")!;
         Assert.All(toolbar.Children.Where(c => c.IsVisible), c => Assert.True(c.Bounds.Right <= toolbar.Bounds.Width + 0.5, $"{c.Bounds} is cut off"));
         Assert.True(toolbar.Bounds.Height > Labelled("Open in Bitwig").Bounds.Height * 1.5, "The toolbar didn't wrap");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_songs_right_click_menu_shows_each_lines_key_and_has_the_keyed_actions()
+    {
+        // Review: the song menu showed no keys, and had no Fix or MIDI lines though they have keys.
+        var file = Path.Combine(_root, "Beat.flp");
+        File.WriteAllBytes(file, [0]);
+        _db.Upsert(new LibraryDb.IndexedFile(file, 1, 100, new ProjectInfo { Daw = "FL Studio" }, null, [("K:/Samples/Gone.wav", false)], []));
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var page = main.Projects;
+        page.ReloadAsync().GetAwaiter().GetResult();
+        var view = new ProjectsView { DataContext = page };
+        var window = new Window { Content = view, Width = 1400, Height = 900 };
+        window.Show();
+        page.Selected = page.Items.Single();
+        Settle();
+        var grid = view.FindControl<DataGrid>("Grid")!;
+        var menu = (MenuFlyout)grid.ContextFlyout!;
+        MenuItem Line(string header) => menu.Items.OfType<MenuItem>().Single(i => (string?)i.Header == header);
+        void Open()
+        {
+            menu.ShowAt(grid);
+            Settle();
+        }
+
+        Open();
+        Assert.Equal(KeyGesture.Parse("Ctrl+O"), Line("Open in Bitwig").InputGesture);
+        Assert.Equal(KeyGesture.Parse("Ctrl+Shift+F"), Line("Fix…").InputGesture);
+        Assert.Equal(KeyGesture.Parse("Ctrl+Shift+E"), Line("Show in folder").InputGesture);
+        Assert.Equal(KeyGesture.Parse("Ctrl+Shift+C"), Line("Copy path").InputGesture);
+        Assert.Null(Line("Open in FL Studio").InputGesture);   // no key of its own
+        menu.Hide();
+
+        // A key changed in Settings › Shortcuts shows the next time it opens.
+        main.Shortcuts.Set("projects.copyPath", "Ctrl+Shift+P");
+        Open();
+        Assert.Equal(KeyGesture.Parse("Ctrl+Shift+P"), Line("Copy path").InputGesture);
+        menu.Hide();
         window.Close();
     }
 

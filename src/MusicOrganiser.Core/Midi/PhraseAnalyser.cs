@@ -152,7 +152,8 @@ public static partial class PhraseAnalyser
             })
             .OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
         if (list.Count == 0 || keepPlace) return list;
-        var shift = list[0].Start / Bar * Bar;
+        // To the bar it starts in, counted down: a note pushed in before tick 0 (-48) starts in the bar before, not on it.
+        var shift = list[0].Start - (list[0].Start % Bar + Bar) % Bar;
         if (shift != 0) for (var i = 0; i < list.Count; i++) list[i] = list[i] with { Start = list[i].Start - shift };
         return list;
     }
@@ -533,7 +534,7 @@ public static partial class PhraseAnalyser
         var top = Math.Max(1e-6f, chroma.Max());
         for (var i = 0; i < 12; i++) f[19 + i] = chroma[(tonic + i) % 12] / top;
         var grid = new float[16];
-        foreach (var n in notes) grid[(int)(n.Start % Bar * 16 / Bar)]++;
+        foreach (var n in notes) grid[(int)((n.Start % Bar + Bar) % Bar * 16 / Bar)]++;   // a start before 0 counts in the bar before
         var gmax = Math.Max(1, grid.Max());
         for (var i = 0; i < 16; i++) f[31 + i] = grid[i] / gmax;
         f[47] = key is { Minor: true } ? 1 : 0;

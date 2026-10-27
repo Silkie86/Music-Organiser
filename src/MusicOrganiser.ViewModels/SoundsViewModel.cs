@@ -28,6 +28,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     public KitViewModel Kit { get; }
     /// <summary>The Duplicates tab: copies of the same sound across your sample folders.</summary>
     public DuplicatesViewModel Duplicates { get; }
+    /// <summary>The app's shortcut list, whose keys the sounds' right-click menus show.</summary>
+    public ShortcutsViewModel Shortcuts => _main.Shortcuts;
 
     public static IReadOnlyList<string> AllTypes { get; } = [.. SoundTypes.All, SoundTypes.Unknown];
     public static IReadOnlyList<string> KeyChoices { get; } = ["Any key", .. Enumerable.Range(0, 12).Select(t => MusicTheory.KeyName(t, false, true)), .. Enumerable.Range(0, 12).Select(t => MusicTheory.KeyName(t, true, true))];
@@ -91,6 +93,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     [ObservableProperty] IReadOnlyList<TagSummary> _tagSummaries = [];
 
     Dictionary<long, double>? _describeScores;
+    // Counts describe searches (and what drops their result), so one that ends late doesn't put its matches back.
+    int _describing;
 
     public const string AutoPlayKey = "sound_lab_autoplay";
     /// <summary>Tiles or List: how the sounds were shown last time.</summary>
@@ -110,6 +114,13 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     public bool IsHistory => ViewMode == History;
 
     [ObservableProperty] string _sortBy = Shuffled;
+
+    /// <summary>
+    /// The list column whose header you clicked ("Bpm", "Name"…), or null to follow <see cref="SortBy"/>. It orders the list
+    /// only, here off the UI thread like every order: the grid sorting 357,000 sounds itself froze the window.
+    /// </summary>
+    public string? ColumnSort { get; private set; }
+    public bool ColumnSortDescending { get; private set; }
 
     /// <summary>The tiles, a row at a time (so only the rows on screen are drawn), <see cref="TileColumns"/> to a row.</summary>
     [ObservableProperty] IReadOnlyList<TileRow> _tileRows = [];
@@ -233,7 +244,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     FolderWatch? _sampleWatch;
     readonly HashSet<string> _changedSounds = new(StringComparer.OrdinalIgnoreCase);
-    bool _sampleFoldersOverflowed;
+    bool _sampleFoldersOverflowed;   // the folders are to be walked: too much changed to name, or a folder was added
 
     /// <summary>
     /// How long the sample folders must be quiet before new sounds are listened to: a pack being unzipped or copied in
@@ -252,6 +263,18 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     public void StopWatching() => _sampleWatch?.Dispose();
+
+    /// <summary>
+    /// Settings added a sample folder: it's watched from now on, and the folders are walked for the sounds already in
+    /// it (the watcher only sees what changes). While a job runs (a scan, Deep listen) the walk waits for it rather than
+    /// being dropped.
+    /// </summary>
+    public void SampleFolderAdded()
+    {
+        WatchSampleFolders();
+        _sampleFoldersOverflowed = true;   // walked as when too much changed to name
+        if (!IsBusy) _ = TakeInChangedSoundsAsync();
+    }
 
     internal void SampleFilesChanged(FolderWatch.Changes changes)
     {
@@ -405,7 +428,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         UpdateSummary();
         UpdateYears();
         if (OnlyUnused || YearFilter != AnyYear) Refresh();
-        else if (SortBy == MostLiked) ApplySort();
+        else if (SortBy == MostLiked || IsList && ColumnSort is "UsedIn" or "Liked") ApplySort();
     }
 
     void UpdateSummary()
@@ -502,6 +525,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// <summary>The order chosen now, kept the same way as <see cref="MakeFilter"/>.</summary>
     Comparison<Sound> MakeOrder()
     {
+        if (IsList && ColumnSort is { } column) return ColumnOrder(column, ColumnSortDescending);
         if (_describeScores is { } scores)
             return (a, b) => scores.GetValueOrDefault(b.Id).CompareTo(scores.GetValueOrDefault(a.Id));
         var sort = SortBy;
@@ -522,6 +546,53 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     void ApplySort() => UpdateList();
+
+    /// <summary>A click on a list column's header: sorts by that column, then the other way, then back to the Order box's order.</summary>
+    public void SortByColumn(string column)
+    {
+        if (ColumnSort != column) (ColumnSort, ColumnSortDescending) = (column, false);
+        else if (!ColumnSortDescending) ColumnSortDescending = true;
+        else ColumnSort = null;
+        OnPropertyChanged(nameof(ColumnSort));
+        ApplySort();
+    }
+
+    /// <summary>Back to the Order box's order (or the best matches'), when one is picked.</summary>
+    void ClearColumnSort()
+    {
+        if (ColumnSort is null) return;
+        ColumnSort = null;
+        OnPropertyChanged(nameof(ColumnSort));
+    }
+
+    /// <summary>A list column's order, smallest first unless <paramref name="descending"/>; sounds with nothing in it go last either way.</summary>
+    static Comparison<Sound> ColumnOrder(string column, bool descending)
+    {
+        int Way(int c) => descending ? -c : c;
+        int Text(string a, string b) =>
+            a.Length == 0 || b.Length == 0 ? b.Length.CompareTo(a.Length) : Way(string.Compare(a, b, StringComparison.OrdinalIgnoreCase));
+        int Number<T>(T? a, T? b) where T : struct, IComparable<T> =>
+            a is { } x ? b is { } y ? Way(x.CompareTo(y)) : -1 : b is null ? 0 : 1;
+        Comparison<Sound> by = column switch
+        {
+            "Favourite" => (a, b) => Way(a.Favourite.CompareTo(b.Favourite)),
+            "Liked" => (a, b) => Way(a.Liked.CompareTo(b.Liked)),
+            "Type" => (a, b) => Text(a.Type, b.Type),
+            "Key" => (a, b) => Number(KeyNumber(a), KeyNumber(b)),
+            "Bpm" => (a, b) => Number(a.Bpm, b.Bpm),
+            "RootNote" => (a, b) => Number(a.Analysis?.Pitch, b.Analysis?.Pitch),
+            "Seconds" => (a, b) => Way(a.Seconds.CompareTo(b.Seconds)),
+            "Character" => (a, b) => Text(a.Character, b.Character),
+            "UsedIn" => (a, b) => Way(a.UsedIn.CompareTo(b.UsedIn)),
+            "Folder" => (a, b) => Text(a.Folder, b.Folder),
+            _ => (a, b) => Text(a.Name, b.Name),
+        };
+        return (a, b) =>
+        {
+            var c = by(a, b);
+            return c != 0 ? c : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+        };
+    }
 
     int _listVersion;
 
@@ -561,16 +632,25 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     // Keys in note order, major before minor; sounds with no key last.
-    static int KeyOrder(Sound s) => s.Analysis?.KeyTonic is { } t ? t * 2 + (s.Analysis.KeyMinor ? 1 : 0) : int.MaxValue;
+    static int KeyOrder(Sound s) => KeyNumber(s) ?? int.MaxValue;
+    static int? KeyNumber(Sound s) => s.Analysis?.KeyTonic is { } t ? t * 2 + (s.Analysis.KeyMinor ? 1 : 0) : null;
 
-    partial void OnSortByChanged(string value) => ApplySort();
+    partial void OnSortByChanged(string value)
+    {
+        ClearColumnSort();
+        ApplySort();
+    }
 
     /// <summary>A new random order (and switches to it).</summary>
     [RelayCommand]
     void Shuffle()
     {
         _shuffle = Items.ToDictionary(s => s.Id, _ => Random.Shared.Next());
-        if (SortBy == Shuffled) ApplySort();
+        if (SortBy == Shuffled)
+        {
+            ClearColumnSort();
+            ApplySort();
+        }
         else SortBy = Shuffled;
     }
 
@@ -578,6 +658,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     {
         if (value != History) _db.SetSetting(ViewKey, value);
         if (value == Tiles) BuildTiles();
+        if (value == List && ColumnSort is not null) UpdateList();   // the tiles left the header's order to the list
         if (value == History) LoadHistory();
         if (value == Galaxy)
         {
@@ -630,7 +711,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     {
         _weights = weights;
         Score();
-        if (SortBy == MostLiked) ApplySort();
+        if (SortBy == MostLiked || IsList && ColumnSort == "Liked") ApplySort();
         else BuildTiles();
     }
 
@@ -674,6 +755,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     partial void OnDescribeModeChanged(bool value)
     {
+        _describing++;
         _describeScores = null;
         ApplySort();
         Refresh();
@@ -715,6 +797,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             Refresh();
             return;
         }
+        var request = ++_describing;   // a describe search still running is no longer wanted
         if (string.IsNullOrWhiteSpace(SearchText))
         {
             _describeScores = null;
@@ -728,7 +811,11 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         {
             var text = SearchText;
             var hits = await Task.Run(() => Org.Describe(text, 300));
+            // Describe mode turned off or the filters cleared meanwhile: not wanted any more. (Words typed meanwhile wait
+            // for Enter, as always; the message says which words these matches are for.)
+            if (request != _describing || !DescribeMode) return;
             _describeScores = hits.ToDictionary(h => h.Sound.Id, h => h.Score);
+            ClearColumnSort();   // closest first, as the message says
             Message = $"Best matches for “{text}”, closest first";
         }
         ApplySort();
@@ -739,6 +826,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     void ClearFilters()
     {
         SearchText = "";
+        _describing++;
         _describeScores = null;
         SelectedType = TypeCounts.FirstOrDefault();
         LoopFilter = 0;
@@ -1080,12 +1168,17 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         try
         {
             var (notes, chords) = await Task.Run(() => Org.Transcribe(s));
+            // Another sound picked meanwhile: these notes aren't its (and Export MIDI would save them under its name).
+            if (Selected != s) return;
             Notes = notes;
             NoteChords = chords;
             NotesMessage = notes.Count == 0 ? "No clear notes found (drums and noise usually have none)."
                 : $"{notes.Count} notes" + (chords.Count > 0 ? $" · chords: {string.Join(" → ", chords.Select(c => c.Name).Take(16))}" : "");
         }
-        catch (Exception e) { NotesMessage = $"Couldn't detect notes: {e.Message}"; }
+        catch (Exception e)
+        {
+            if (Selected == s) NotesMessage = $"Couldn't detect notes: {e.Message}";
+        }
     }
 
     [RelayCommand]
@@ -1266,18 +1359,20 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Refresh();
     }
 
+    /// <summary>
+    /// The projects the sound's "Used in" counts: those with it at its own path, else (as the count does) those with a
+    /// copy of the same name anywhere. Looked up in the background: the name means reading every project's samples.
+    /// </summary>
     [RelayCommand]
-    void ShowProjects()
+    async Task ShowProjects()
     {
-        if (Selected is { UsedIn: > 0 } s)
-        {
-            var ids = _db.ProjectsUsingSample(s.Path).ToList();
-            if (ids.Count == 0)
-                ids = _db.SampleUsage().Where(u => u.Path.Split('\\', '/')[^1].Equals(Path.GetFileName(s.Path), StringComparison.OrdinalIgnoreCase))
-                         .SelectMany(u => _db.ProjectsUsingSample(u.Path)).Distinct().ToList();
-            _main.Projects.ShowOnly(ids, $"Projects using {s.Name}");
-            _main.ShowProjects();
-        }
+        if (Selected is not { UsedIn: > 0 } s) return;
+        var path = s.Path;
+        var ids = await UiWork.Run(() => _db.ProjectsUsingSample(path) is { Count: > 0 } atPath
+            ? atPath
+            : _db.ProjectsUsingSampleNamed(Path.GetFileName(path)));
+        _main.Projects.ShowOnly(ids, $"Projects using {s.Name}");
+        _main.ShowProjects();
     }
 }
 
@@ -1482,26 +1577,37 @@ public sealed partial class KitViewModel(SoundsViewModel parent) : ObservableObj
         }
     }
 
-    string? ExportKit()
+    string? ExportKit() => ExportPads()?.Folder;
+
+    KitBuilder.Exported? ExportPads()
     {
         var slots = Slots.Select(s => s.Slot).Where(s => s.Sound is not null).ToList();
         if (slots.Count == 0) { Status = "Roll a kit first."; return null; }
-        return KitBuilder.Export(slots, Path.Combine(parent.ExportFolder(), "Kits"),
+        return KitBuilder.ExportPads(slots, Path.Combine(parent.ExportFolder(), "Kits"),
             $"Kit {DateTime.Now:yyyy-MM-dd HHmm} #{Seed}", new KitBuilder.ExportOptions(ElektronReady, Mono, Normalise));
     }
 
+    // The kit as last dragged (its pads, sounds and options), and what that export wrote.
+    (string Kit, KitBuilder.Exported Export)? _dragged;
+
     /// <summary>
-    /// The "Drag kit" handle: the kit's pads, exported with the chosen options, in pad order.
+    /// The "Drag kit" handle: the kit's pads, exported with the chosen options, in pad order (only this kit's: a pad
+    /// re-rolled or taken off since an earlier drag isn't in it). The same kit dragged again, unchanged, takes the files
+    /// already exported rather than converting every pad again as the drag starts.
     /// Single pads dragged from the list carry their original sound instead.
     /// </summary>
     public DragPayload? MakeDrag(IReadOnlyList<object> items)
     {
         if (items.Count > 0 && items.All(i => i is KitSlotItem) && items.Count < Slots.Count)
             return parent.MakeDrag(items);
-        if (ExportKit() is not { } folder) return null;
-        var files = Directory.GetFiles(folder).Where(f => !f.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
-            .Order(StringComparer.OrdinalIgnoreCase).ToList();
         var pads = Slots.Where(s => s.Slot.Sound is not null).ToList();
+        var kit = string.Join("\n", pads.Select(p => $"{p.Name}\t{p.Slot.Sound!.Path}").Prepend($"{Seed} {ElektronReady} {Mono} {Normalise}"));
+        if (_dragged is not { } last || last.Kit != kit || !last.Export.Pads.All(File.Exists))
+        {
+            if (ExportPads() is not { } export) return null;
+            _dragged = (kit, export);
+        }
+        var (folder, files) = _dragged.Value.Export;
         var cards = pads.Select(p => new DragCard(p.Name, p.SoundName, Glyphs.Kit)).ToList();
         parent.Record(pads.Select(p => p.Slot.Sound).OfType<Sound>(), SoundEvent.Drag);
         Status = $"Exported to {folder}";

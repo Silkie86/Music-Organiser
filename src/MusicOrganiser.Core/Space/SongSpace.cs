@@ -62,10 +62,24 @@ public static class SongSpace
     /// Every sample path the song's saves use, to spot audio nothing uses. Projects store paths as they were on the PC that
     /// saved them, so a file counts as used when any save names a file of that name.
     /// </param>
+    /// <summary>
+    /// What the rest of the library says, so Compact never offers what another song needs.
+    /// </summary>
+    /// <param name="SampleFolders">Your sample folders: audio in them is never offered.</param>
+    /// <param name="UsedByAny">Which of these audio file names any project's samples have (by name, as for the song's own).</param>
+    /// <param name="SharedNames">
+    /// Names of the song's FL Studio saves that another song elsewhere has too ("Beat", "Untitled"): FL Studio's shared
+    /// Backup folder doesn't say which song an autosave is of, so those autosaves are left alone.
+    /// </param>
+    public sealed record Elsewhere(IReadOnlyList<string> SampleFolders, Func<IReadOnlyCollection<string>, IReadOnlySet<string>> UsedByAny,
+                                   IReadOnlySet<string> SharedNames);
+
     /// <param name="keepBackups">How many of the newest autosaves stay.</param>
     /// <param name="sittingHours">How long without a save ends a sitting, for thinning older saves; 0 doesn't thin.</param>
+    /// <param name="elsewhere">What other songs need (see <see cref="Elsewhere"/>).</param>
     public static SongSpaceReport Measure(IReadOnlyList<Save> saves, IReadOnlyList<string> roots, IReadOnlySet<string> usedAudio,
-                                          int keepBackups = DefaultKeepBackups, int sittingHours = 0, CancellationToken ct = default) => Parallelism.Background(() =>
+                                          int keepBackups = DefaultKeepBackups, int sittingHours = 0, CancellationToken ct = default,
+                                          Elsewhere? elsewhere = null) => Parallelism.Background(() =>
     {
         if (saves.Count == 0) return new SongSpaceReport(0, false, "", 0, 0, 0, 0, 0, []);
         // Written the way the folder listing writes them ("C:\a/b" and "C:\a\b" are the same file).
@@ -90,7 +104,8 @@ public static class SongSpace
                 seen.Add(path);
                 var rel = Path.GetRelativePath(folder, path).Split(['\\', '/']);
                 if (savePaths.Contains(path)) savesBytes += size;
-                else if (rel.Length > 1 && rel[..^1].Any(Scanner.IsAutosaveDir) || Scanner.IsAutosaveFile(rel[^1]))
+                // Only project files are autosaves: audio or anything else kept in a "Backups" folder is yours.
+                else if (Readers.For(path) is not null && (rel.Length > 1 && rel[..^1].Any(Scanner.IsAutosaveDir) || Scanner.IsAutosaveFile(rel[^1])))
                 {
                     backupBytes += size;
                     backups.Add((path, size, modified));
@@ -114,8 +129,16 @@ public static class SongSpace
                 if (seen.Add(s.Path)) savesBytes += File.Exists(s.Path) ? new FileInfo(s.Path).Length : s.Size;
         }
 
+        // Audio in your sample folders, or that any other project uses by name, isn't the song's to offer.
+        if (elsewhere is not null && unusedAudio.Count > 0)
+        {
+            unusedAudio.RemoveAll(a => elsewhere.SampleFolders.Any(f => DiskSpace.IsInside(a.Path, f)));
+            var used = elsewhere.UsedByAny(unusedAudio.Select(a => Path.GetFileName(a.Path)).Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+            unusedAudio.RemoveAll(a => used.Contains(Path.GetFileName(a.Path)));
+        }
+
         // FL Studio keeps its autosaves in one Backup folder for all songs (Projects\Backup), named after the song.
-        foreach (var b in FlBackups(saves, roots))
+        foreach (var b in FlBackups(saves, roots, elsewhere?.SharedNames))
             if (seen.Add(b.Path))
             {
                 backupBytes += b.Size;
@@ -123,8 +146,11 @@ public static class SongSpace
             }
 
         var items = new List<CompactItem>();
-        items.AddRange(SameSaves(saves, newest, ct));
-        var copies = items.SelectMany(i => i.Paths).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var same = SameSaves(saves, newest, ct).ToList();
+        items.AddRange(same.Select(s => s.Item));
+        // Neither a copy nor the save it's a copy of is thinned: removing both would lose what they held (the last save
+        // of a sitting, kept as a later identical save).
+        var copies = same.SelectMany(s => s.Item.Paths.Append(s.Kept)).ToHashSet(StringComparer.OrdinalIgnoreCase);
         items.AddRange(Thin(saves, sittingHours).Where(s => !copies.Contains(s.Path))
                            .Select(s => new CompactItem(CompactKind.ThinnedSave, [s.Path], File.Exists(s.Path) ? new FileInfo(s.Path).Length : s.Size,
                                                         $"Saved {s.Modified:d MMM yyyy HH:mm}")));
@@ -157,8 +183,9 @@ public static class SongSpace
     }
 
     /// <summary>
-    /// Whether the folder is the song's own: none of your project folders, and every project file directly in it is one
-    /// of the song's saves. Bitwig and Studio One give each song a folder; FL Studio songs often share one.
+    /// Whether the folder is the song's own: none of your project folders, and every project file in it, or in a folder
+    /// in it, is one of the song's saves (autosave folders aside). Bitwig and Studio One give each song a folder; FL
+    /// Studio songs often share one, and another song kept in a folder inside this one has its own autosaves there.
     /// </summary>
     public static bool OwnsFolder(string folder, IReadOnlySet<string> savePaths, IReadOnlyList<string> roots)
     {
@@ -166,17 +193,21 @@ public static class SongSpace
         if (roots.Any(r => DiskSpace.IsInside(r, folder))) return false;   // a project folder, or one holding it
         try
         {
-            return Directory.EnumerateFiles(folder).Where(Scanner.IsProjectFile).All(savePaths.Contains);
+            // Every file, OneDrive's online-only ones too: another song's save takes no room here, but it's still there.
+            foreach (var path in DiskSpace.AllFiles(folder, (ref System.IO.Enumeration.FileSystemEntry e) => e.ToFullPath()))
+            {
+                if (!Scanner.IsProjectFile(path) || savePaths.Contains(path)) continue;
+                var rel = Path.GetRelativePath(folder, path).Split(['\\', '/']);
+                if (!rel[..^1].Any(Scanner.IsAutosaveDir)) return false;
+            }
+            return true;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
     }
 
     static IEnumerable<(string Path, long Size, DateTime Modified)> Walk(string folder, CancellationToken ct)
     {
-        var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
-        var entries = new System.IO.Enumeration.FileSystemEnumerable<(string, long, DateTime)>(folder,
-            (ref System.IO.Enumeration.FileSystemEntry e) => (e.ToFullPath(), e.Length, e.LastWriteTimeUtc.LocalDateTime), options)
-        { ShouldIncludePredicate = (ref System.IO.Enumeration.FileSystemEntry e) => !e.IsDirectory };
+        var entries = DiskSpace.Files(folder, (ref System.IO.Enumeration.FileSystemEntry e) => (e.ToFullPath(), e.Length, e.LastWriteTimeUtc.LocalDateTime));
         var n = 0;
         foreach (var e in entries)
         {
@@ -187,12 +218,14 @@ public static class SongSpace
 
     /// <summary>
     /// FL Studio's autosaves of the song: "Song (autosave).flp" and "Song (overwritten at 2213h05).flp" in a Backup folder
-    /// beside the song or in a folder above it, up to your project folder.
+    /// beside the song or in a folder above it, up to your project folder. Names another song has too (<paramref name="shared"/>)
+    /// are left out: the autosaves could be that song's.
     /// </summary>
-    static IEnumerable<(string Path, long Size, DateTime Modified)> FlBackups(IReadOnlyList<Save> saves, IReadOnlyList<string> roots)
+    static IEnumerable<(string Path, long Size, DateTime Modified)> FlBackups(IReadOnlyList<Save> saves, IReadOnlyList<string> roots, IReadOnlySet<string>? shared)
     {
         var stems = saves.Where(s => s.Path.EndsWith(".flp", StringComparison.OrdinalIgnoreCase))
-                         .Select(s => Path.GetFileNameWithoutExtension(s.Path)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                         .Select(s => Path.GetFileNameWithoutExtension(s.Path)).Where(n => shared?.Contains(n) != true)
+                         .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (stems.Count == 0) yield break;
         var dirs = saves.Select(s => Path.GetDirectoryName(s.Path) ?? "").Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var backupDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -223,8 +256,9 @@ public static class SongSpace
     /// <summary>
     /// Saves that are exact copies of another save in the same folder (a DAW saving with nothing changed). Of each set the
     /// newest stays, so the save you'd open is never on the list. Only files of the same size are read, to compare them.
+    /// Each comes with the save that stays in its place.
     /// </summary>
-    static IEnumerable<CompactItem> SameSaves(IReadOnlyList<Save> saves, Save newest, CancellationToken ct)
+    static IEnumerable<(CompactItem Item, string Kept)> SameSaves(IReadOnlyList<Save> saves, Save newest, CancellationToken ct)
     {
         var sets = saves.Where(s => File.Exists(s.Path))
                         .GroupBy(s => (Folder: (Path.GetDirectoryName(s.Path) ?? "").ToLowerInvariant(), Size: new FileInfo(s.Path).Length))
@@ -236,7 +270,7 @@ public static class SongSpace
             {
                 var keep = same.Any(s => s == newest) ? newest : same.MaxBy(s => s.Modified)!;
                 foreach (var s in same.Where(s => s != keep))
-                    yield return new(CompactKind.SameSave, [s.Path], bySize.Key.Size, $"Same as {Path.GetFileName(keep.Path)}");
+                    yield return (new(CompactKind.SameSave, [s.Path], bySize.Key.Size, $"Same as {Path.GetFileName(keep.Path)}"), keep.Path);
             }
         }
     }

@@ -19,8 +19,11 @@ public sealed class SpaceMeter(LibraryDb db)
     public IReadOnlyList<string> PluginRoots() =>
         db.GetList(Scanner.PluginFoldersKey) is { Count: > 0 } custom ? custom : PluginCatalog.DefaultFolders().ToList();
 
-    /// <summary>Whether the plugins need measuring: never measured, or not this week.</summary>
-    public bool PluginsStale() => db.PluginSpaceMeasured() is not { } t || DateTime.Now - t > StaleAfter;
+    /// <summary>
+    /// Whether the plugins need measuring: never measured, not this week, or measured before spare copies were looked for
+    /// (they're found by the same measure, and an older app's measure didn't look).
+    /// </summary>
+    public bool PluginsStale() => db.PluginSpaceMeasured() is not { } t || DateTime.Now - t > StaleAfter || !db.SpareCopiesLookedFor();
 
     /// <summary>
     /// Measures the installed plugins, or only <paramref name="onlyKeys"/> (after you add or rule out a folder, or clean
@@ -35,13 +38,42 @@ public sealed class SpaceMeter(LibraryDb db)
         var spaces = PluginSpace.Measure(installed, PluginSpace.DataRoots(), roots, ProtectedRoots(),
             key => db.GetList(LibraryDb.AddedFoldersKey(key)), key => db.GetList(LibraryDb.RuledOutKey(key)), onlyKeys, ct);
         db.SavePluginSpaces(spaces, all: onlyKeys is null);
-        if (onlyKeys is null)
-        {
-            var aax = PluginCatalog.ScanFiles(SpareCopies.AaxFolders());
-            db.SaveSpareCopies(SpareCopies.Find(files.Concat(aax).ToList(), db.PluginFormatsUsed(),
-                                                SpareCopies.ProToolsInstalled(), SizeOf));
-        }
+        if (onlyKeys is null) SaveSpareCopies(files, ct);
         return spaces;
+    }
+
+    /// <summary>
+    /// Looks for spare copies on their own, without measuring every plugin (the Plugins page's Look now, when they
+    /// haven't been looked for yet), and stores what it finds.
+    /// </summary>
+    public IReadOnlyList<SpareCopy> LookForSpareCopies(CancellationToken ct = default) =>
+        SaveSpareCopies(PluginCatalog.ScanFiles(PluginRoots()), ct);
+
+    IReadOnlyList<SpareCopy> SaveSpareCopies(IReadOnlyList<InstalledPlugin> files, CancellationToken ct)
+    {
+        var aax = PluginCatalog.ScanFiles(SpareCopies.AaxFolders());
+        var spares = SpareCopies.Find(files.Concat(aax).ToList(), db.PluginFormatsUsed(), SpareCopies.ProToolsInstalled(), p =>
+        {
+            ct.ThrowIfCancellationRequested();
+            return SizeOf(p);
+        });
+        db.SaveSpareCopies(spares);
+        return spares;
+    }
+
+    /// <summary>
+    /// The stored spare copies that are still spare now. The list is made when plugins are measured (once a week), and
+    /// projects scanned since may use a format it calls spare (Vital's CLAP in new Bitwig songs), or Pro Tools may be
+    /// installed now. Their sizes are the stored ones.
+    /// </summary>
+    public IReadOnlyList<SpareCopy> SpareCopiesNow()
+    {
+        var stored = db.SpareCopyList();
+        if (stored.Count == 0) return stored;
+        var sizes = stored.GroupBy(c => c.Path, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First().Bytes, StringComparer.OrdinalIgnoreCase);
+        var files = PluginCatalog.ScanFiles(PluginRoots()).Concat(PluginCatalog.ScanFiles(SpareCopies.AaxFolders())).ToList();
+        return SpareCopies.Find(files, db.PluginFormatsUsed(), SpareCopies.ProToolsInstalled(), p => sizes.GetValueOrDefault(p))
+                          .Where(c => sizes.ContainsKey(c.Path)).ToList();
     }
 
     static long SizeOf(string path) =>

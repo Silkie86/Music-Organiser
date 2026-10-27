@@ -374,6 +374,28 @@ public class StudioOneTests
         var preset = Assert.Single(r.ExtractPresets(_path));
         Assert.Equal(("Inst 1", "Diva", ".vstpreset"), (preset.Name, preset.Plugin, preset.Extension));
     }
+
+    [Fact]
+    public void Reads_each_insert_as_the_plugin_it_holds_with_its_ID_rather_than_the_name_it_shows()
+    {
+        // Solomon's "Click Clack" (27 Oct 2026): Studio One numbers a plugin's second insert ("FabFilter Pro-Q 2 2") and keeps
+        // the name an insert first had after Waves renamed the plugin ("TG12345 Stereo"). Read by those, and with Studio One's
+        // own effects not known as its own, 12 of its 27 plugins showed as missing.
+        var info = new StudioOneReader().Read(Fixtures.StudioOneInserts(Fixtures.TempDir()));
+
+        Assert.Equal(
+        [
+            ("Abbey Road EMI TG12345 Ch Stereo", PluginKind.Effect, "VST3", "56535454473553746731323334352073"),
+            ("Arpeggiator", PluginKind.NoteEffect, "Native", "BDD2D6E5381941B4BF917B832DAAFA0B"),
+            ("FabFilter Pro-Q 2", PluginKind.Effect, "VST2", "FQ2p"),   // a VST2's four letters, as the plugin scanner gives them
+            ("Gate", PluginKind.Effect, "Native", "132C0E1F06FD4C96BD65678C04FE1C92"),
+            ("Impact", PluginKind.Instrument, "Native", "3713E26C2FCA40249F2517E9D2BE2B9B"),
+            ("Kontakt 5 16out", PluginKind.Instrument, "VST2", "NiO7"),
+            ("Kramer Tape Stereo", PluginKind.Effect, "VST3", "565354544150536B72616D6572207461"),
+            ("Pro EQ", PluginKind.Effect, "Native", "D9AE9ACD69B44B43B8D5983E39C559A5"),
+        ], info.Plugins.Select(p => (p.Name, p.Kind, p.Format, p.Id)).OrderBy(p => p.Name, StringComparer.Ordinal));
+        Assert.All(info.Plugins, p => Assert.Equal("", p.Path));
+    }
 }
 
 public class FlStudio25Tests
@@ -575,6 +597,24 @@ public class FlStudio9Tests
         // A save with no older one keeps what it has.
         var alone = Fixtures.FlStudio25NothingSaved(Fixtures.TempDir());
         Assert.Empty(LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(alone), alone).Taken);
+    }
+
+    [Fact]
+    public void ALostSoundIsLookedForPastOlderSavesWithoutItsPluginAndAMissingFolderIsNoError()
+    {
+        // funk step_8 has other plugins, so only funk step_7 (FL 9) still has LegacyCell's sound.
+        var dir = Fixtures.TempDir();
+        File.Move(Fixtures.FlStudio9Project(dir, Chunk), Path.Combine(dir, "funk step_7.flp"));
+        File.Move(Fixtures.FlStudioProject(dir), Path.Combine(dir, "funk step_8.flp"));
+        var path = Fixtures.FlStudio25NothingSaved(dir);
+        var (song, taken) = LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(path), path);
+        Assert.Equal(Chunk, song.Channels.Single().Instrument!.State!.Data[60..]);
+        Assert.Equal("Cell: LegacyCell's sound, from funk step_7", Assert.Single(taken));
+
+        // Its folder gone since it was read: converting goes on without the older saves.
+        var lost = Readers.FlStudio.ReadSong(path);
+        var gone = Path.Combine(dir, "gone", "funk step_9.flp");
+        Assert.Same(lost, LostSounds.FromOlderSaves(lost, gone).Song);
     }
 
     [Theory]
@@ -812,5 +852,20 @@ public class MidiWriterTests
         // At tick 96 the first note's off must come before the second note's on.
         var s = Encoding.Latin1.GetString(bytes);
         Assert.True(s.IndexOf("\x80\x3C\x00", StringComparison.Ordinal) < s.LastIndexOf("\x90\x3C\x64", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void FlStepSequencerStepsAreWrittenAsSixteenthsNotOneTick()
+    {
+        // Kicks on each beat and two hats a 32nd apart, as FL's step sequencer stores them (no length), and a played note.
+        var clip = new MidiClip { Name = "Drums", Ppq = 96 };
+        foreach (var at in new long[] { 0, 96, 192, 288 }) clip.Track("Kick").Add(new NoteEvent(at, 1, 36, 100, Step: true));
+        clip.Track("Kick").Add(new NoteEvent(0, 1, 42, 100, Step: true));
+        clip.Track("Kick").Add(new NoteEvent(12, 1, 42, 100, Step: true));
+        clip.Track("Kick").Add(new NoteEvent(0, 192, 60, 100));
+        var notes = MusicOrganiser.Core.Midi.MidiFileReader.Read(MidiWriter.Write(clip), "Drums").SelectMany(p => p.Notes).ToList();
+        Assert.All(notes.Where(n => n.Key == 36), n => Assert.Equal(24, n.Length));
+        Assert.Equal([12L, 24L], notes.Where(n => n.Key == 42).OrderBy(n => n.Start).Select(n => n.Length));   // never over the next hat
+        Assert.Equal(192, notes.Single(n => n.Key == 60).Length);
     }
 }

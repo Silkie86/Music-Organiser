@@ -409,6 +409,7 @@ public static class ChordSpeller
             else if (Take("sus4") || Take("sus")) { Clear(3, 4); Set(5); }
             else if (Take("add")) { var a = AddInterval(); if (a < 0) return null; Set(a); }
             else if (Take("alt")) { Clear(7, 2, 9); Set(10, 1, 3, 8); }
+            else if (Take("maj7") || Take("maj")) Set(11);   // "dim(maj7)", "dim7(maj7)", as the app names them
             else if (Take("b9")) Set(1);
             else if (Take("#9")) Set(3);
             else if (Take("#11")) Set(6);

@@ -105,7 +105,7 @@ public sealed class WaveformView : Control
         {
             dc.FillRectangle(Res("MutedBrush"), new Rect(hx, 0, 1, h));
             var t = Math.Clamp(hx / w, 0, 1) * Duration;
-            var label = new FormattedText(t >= 60 ? $"{(int)t / 60}:{t % 60:00.0}" : $"{t:0.00}s", CultureInfo.CurrentCulture,
+            var label = new FormattedText(TimeLabel(t), CultureInfo.CurrentCulture,
                 FlowDirection.LeftToRight, Typeface.Default, 11, Res("TextBrush"));
             var lx = hx + 4 + label.Width > w ? hx - 4 - label.Width : hx + 4;
             dc.DrawRectangle(Res("SidebarBrush"), null, new RoundedRect(new Rect(lx - 3, 2, label.Width + 6, label.Height + 2), 3));
@@ -113,5 +113,17 @@ public sealed class WaveformView : Control
         }
 
         _ripple.Draw(dc, accent);
+    }
+
+    /// <summary>
+    /// The time under the pointer: "12.34s", or "1:05.2" from a minute on. Rounded to what's shown before it's split up,
+    /// so 119.96 s is "2:00.0", not "1:60.0".
+    /// </summary>
+    internal static string TimeLabel(double t)
+    {
+        if (Math.Round(t, 2, MidpointRounding.AwayFromZero) is var hundredths and < 60) return $"{hundredths:0.00}s";
+        var tenths = Math.Round(t, 1, MidpointRounding.AwayFromZero);
+        var minutes = (int)(tenths / 60);
+        return $"{minutes}:{tenths - minutes * 60:00.0}";
     }
 }

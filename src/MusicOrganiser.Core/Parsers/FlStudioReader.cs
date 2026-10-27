@@ -16,7 +16,7 @@ namespace MusicOrganiser.Core.Parsers;
 public sealed partial class FlStudioReader : IProjectReader
 {
     public string Daw => "FL Studio";
-    public int Version => 6;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist; 4: samples that don't play; 5: FL 4 to 8 notes read as 20-byte records (2026-10-22); 6: FL 6 to 8 playlists, and saves FL stopped writing part-way
+    public int Version => 7;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist; 4: samples that don't play; 5: FL 4 to 8 notes read as 20-byte records (2026-10-22); 6: FL 6 to 8 playlists, and saves FL stopped writing part-way; 7: damaged event sizes read as the file ending there
     public IReadOnlyList<string> Extensions { get; } = [".flp"];
 
     const int Text = 192, Data = 208;
@@ -116,7 +116,7 @@ public sealed partial class FlStudioReader : IProjectReader
         while (pos < end)
         {
             int id = raw[pos++];
-            int size;
+            long size;
             if (id < 64) size = 1;
             else if (id < 128) size = 2;
             // FL 25 and 26 write event 172 with three bytes, not the four its id says. Reading four
@@ -125,18 +125,21 @@ public sealed partial class FlStudioReader : IProjectReader
             else if (id < 192) size = 4;
             else
             {
-                size = 0;
-                for (int shift = 0; pos < end; shift += 7)
+                // At most five bytes of seven bits each; a size that doesn't end by then is junk from a damaged file.
+                size = -1;
+                long n = 0;
+                for (int shift = 0; shift < 35 && pos < end; shift += 7)
                 {
                     var b = raw[pos++];
-                    size |= (b & 0x7F) << shift;
-                    if ((b & 0x80) == 0) break;
+                    n |= (long)(b & 0x7F) << shift;
+                    if ((b & 0x80) == 0) { size = n; break; }
                 }
             }
-            if (pos + size > end) break;   // truncated file: keep what we have
-            if (id == EvVersion && major == 0) int.TryParse(Encoding.ASCII.GetString(raw, pos, size).Split('.')[0], out major);
-            flp.Events.Add(new Event(id, raw.AsMemory(pos, size)));
-            pos += size;
+            if (size < 0 || size > end - pos) break;   // truncated or damaged file: keep what we have
+            var count = (int)size;
+            if (id == EvVersion && major == 0) int.TryParse(Encoding.ASCII.GetString(raw, pos, count).Split('.')[0], out major);
+            flp.Events.Add(new Event(id, raw.AsMemory(pos, count)));
+            pos += count;
         }
 
         // A save FL stopped writing before the mixer and playlist (see FlDamage) won't open in FL.

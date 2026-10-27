@@ -79,10 +79,11 @@ public sealed partial class SongSpaceViewModel : ObservableObject
         var keep = KeepBackups;
         var sitting = Sitting?.Hours ?? 0;
         var ids = _item.OlderSaves.Prepend(_item.Summary).Select(s => s.Id).ToList();
+        var paths = _item.OlderSaves.Prepend(_item.Summary).Select(s => s.Path).ToList();
         SongSpaceReport report;
         try
         {
-            report = await Task.Run(() => SongSpace.Measure(saves, _db.Roots(), _db.SamplesOf(ids), keep, sitting));
+            report = await Task.Run(() => SongSpace.Measure(saves, _db.Roots(), _db.SamplesOf(ids), keep, sitting, elsewhere: Elsewhere(paths)));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -95,6 +96,19 @@ public sealed partial class SongSpaceViewModel : ObservableObject
         Measuring = false;
         OnPropertyChanged(nameof(KeepBackups));
         OnPropertyChanged(nameof(Sitting));
+    }
+
+    /// <summary>
+    /// What other songs need, so it's never offered: your sample folders, audio any project uses, and FL Studio autosaves
+    /// named like another song's (read in the background).
+    /// </summary>
+    SongSpace.Elsewhere Elsewhere(IReadOnlyList<string> saves)
+    {
+        var mine = saves.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var names = saves.Where(s => s.EndsWith(".flp", StringComparison.OrdinalIgnoreCase)).Select(Path.GetFileNameWithoutExtension).OfType<string>().ToList();
+        var shared = _db.FlProjectsNamed(names).Where(p => !mine.Contains(Path.GetFullPath(p)))
+                        .Select(Path.GetFileNameWithoutExtension).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return new(_db.GetList(Scanner.SampleFoldersKey), _db.SampleNamesUsed, shared);
     }
 
     SongSpaceReport? _report;
@@ -256,7 +270,8 @@ public sealed partial class SongSpaceViewModel : ObservableObject
 }
 
 /// <summary>A part of a song's room (saves, autosaves …), for the bar and its legend.</summary>
-public sealed record SpacePart(string Name, long Bytes, string Colour, double Share = 0)
+/// <param name="What">What the part holds, for the app's own files on Settings ("Projects, plugins, samples, tags and ratings").</param>
+public sealed record SpacePart(string Name, long Bytes, string Colour, double Share = 0, string What = "")
 {
     public string SizeText => DiskSpace.Text(Bytes);
 }

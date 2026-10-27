@@ -157,8 +157,9 @@ could be named, coloured or selected in another that came to the front meanwhile
 again that *Let the app make changes* is still on. An `onlyIn` that isn't text is refused (`onlyIn has to be a
 project's name.`); null, or none, means no check. The live tests send it with every request that changes or
 selects something, so a run only ever changes its own test project (see
-[Only in a project made for them](#only-in-a-project-made-for-them)). Both the script and the extension do
-it, and say so with `onlyIn: true` in their hello.
+[Only in a project made for them](#only-in-a-project-made-for-them)), and the Playground's Play in Bitwig
+sends the project that was in front when it was turned on, so it waits while another is in front rather than
+making tracks there. Both the script and the extension do it, and say so with `onlyIn: true` in their hello.
 
 ### Link version 3
 

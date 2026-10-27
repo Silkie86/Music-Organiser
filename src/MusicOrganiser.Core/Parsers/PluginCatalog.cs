@@ -59,6 +59,35 @@ public static partial class PluginCatalog
         name.StartsWith("WaveShell", StringComparison.OrdinalIgnoreCase) ||
         path.Contains("WaveShell", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// A VST3 class ID the way the plugin scanner writes it, 32 hex digits in capitals, from the way a project writes it
+    /// (Studio One: "{56535446-5132-7066-6162-66696C746572}"). Empty when it isn't one.
+    /// </summary>
+    public static string ClassId(string text)
+    {
+        var hex = text.Trim().Trim('{', '}').Replace("-", "");
+        return hex.Length == 32 && hex.All(char.IsAsciiHexDigit) ? hex.ToUpperInvariant() : "";
+    }
+
+    /// <summary>A VST2's ID the way the plugin scanner writes it: its four letters ("FQ2p"), or the number when they aren't all letters.</summary>
+    public static string Vst2Id(int id)
+    {
+        var bytes = new[] { (byte)(id >> 24), (byte)(id >> 16), (byte)(id >> 8), (byte)id };
+        return bytes.All(b => b is >= 0x20 and <= 0x7E)
+            ? System.Text.Encoding.ASCII.GetString(bytes)
+            : id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// The VST2 ID a VST3 class ID was made from, Steinberg's way of letting a plugin's VST3 stand in for its VST2: "VST",
+    /// the four letters, then the start of its name ("VSTFQ2pfabfilter"). Studio One writes a VST2's ID this way too, and
+    /// Waves make all their VST3s so. Null for any other class ID.
+    /// </summary>
+    public static string? Vst2IdIn(string classId) =>
+        classId.Length == 32 && classId.StartsWith("565354", StringComparison.OrdinalIgnoreCase) &&
+        int.TryParse(classId.AsSpan(6, 8), System.Globalization.NumberStyles.AllowHexSpecifier, System.Globalization.CultureInfo.InvariantCulture, out var id)
+            ? Vst2Id(id) : null;
+
     [System.Text.RegularExpressions.GeneratedRegex(@"[\s_-]*(v?\d+(\.\d+)*|mk\s*[ivx\d]+|x64|x86|vst3?|\(.*\))$|\s+v$",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex VersionTail();

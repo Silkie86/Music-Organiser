@@ -156,6 +156,9 @@ public sealed class AppShortcuts
             case "app.rescan":
                 if (!main.IsScanning) main.RescanCommand.Execute(null);
                 return true;
+            case "app.fullRescan":
+                if (!main.IsScanning) main.FullRescanCommand.Execute(null);
+                return true;
             // Just the page on show, as the rail's size button does; Settings › General sizes every page.
             case "app.sizeUp": main.PageBiggerCommand.Execute(null); return true;
             case "app.sizeDown": main.PageSmallerCommand.Execute(null); return true;

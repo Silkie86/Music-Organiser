@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Runtime.CompilerServices;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core;
@@ -87,10 +88,14 @@ public sealed partial class PluginsViewModel
             if (byKey.TryGetValue(s.Key, out var exact) && !claimed.Contains(s.Key)) Give(exact, s);
             else rest.Add(s);
         }
+        // Every Waves plugin lives in one WaveShell file, and projects name them one by one ("CLA-76 Stereo"), so the
+        // shell is used whenever a project uses a Waves plugin.
+        var wavesUsed = used.Any(u => IsWaves(u.Name, u.Vendor));
         foreach (var s in rest)
         {
             var family = PluginCatalog.Family(s.Name);
             var close = families.Where(f => Matched(f.Family, family)).ToList();
+            if (close.Count == 0 && wavesUsed && IsShell(s)) continue;   // used, so never offered (as below)
             if (close.Count == 0)
             {
                 rows.Add(new PluginUsage(s.Name, s.Vendor, FormatOf(s), 0, "", true) { Bytes = s.Bytes, SharedBytes = s.SharedBytes, Unused = true });
@@ -101,6 +106,13 @@ public sealed partial class PluginsViewModel
         }
         return rows;
     }
+
+    static bool IsWaves(string name, string vendor) =>
+        PluginCatalog.IsWaves(name, "") || vendor.StartsWith("Waves", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>A Waves shell: the one file every Waves plugin lives in.</summary>
+    static bool IsShell(PluginSpaceInfo s) =>
+        PluginCatalog.IsWaves(s.Name, "") || s.Folders.Any(f => f.Kind == SpaceKind.Program && PluginCatalog.IsWaves(s.Name, f.Path));
 
     static bool Matched(string a, string b) =>
         a.Length >= 4 && b.Length >= 4 && (a == b || a.Contains(b, StringComparison.Ordinal) || b.Contains(a, StringComparison.Ordinal));
@@ -205,20 +217,66 @@ public sealed partial class PluginsViewModel
         var protectedRoots = meter.ProtectedRoots();
         bool NoProjects(string key) =>
             _rowSpace.Where(r => r.Value.Key == key).All(r => r.Key.Projects == 0);
+        // Why a plugin's folder has to stay because of how projects use the plugin, or "".
+        string InUse(SpaceFolder f, PluginUsage p) =>
+            f.Shared && !f.SharedWith.All(NoProjects) ? $"Shared with {NamesOf(f.SharedWith)}, which your projects use."
+            : f.Kind == SpaceKind.Sounds && (p.Projects > 0 || !f.SharedWith.All(NoProjects))
+                ? $"Sounds stay while a project uses {p.Name}: {(p.Projects == 1 ? "1 project does" : $"{p.Projects} projects do")}."
+            : !p.Unused ? $"Your projects still use {p.Name}."
+            : "";
         var folders = space.Folders.Where(f => f.Kind != SpaceKind.Program).OrderByDescending(f => f.Bytes).ToList();
-        // Which folders hold a sample a project uses: read in the background (the samples table is big).
-        var holding = await Task.Run(() => folders.ToDictionary(f => f.Path, f => _db.SampleInside(f.Path)));
+        var spaces = _spaces.Values.ToList();
+        // Which folders hold a sample a project uses, and which hold another listed folder (a maker's folder holds its
+        // plugins' own, which were measured apart): read in the background (the samples table is big).
+        var (holding, inside) = await Task.Run(() =>
+            (folders.ToDictionary(f => f.Path, f => _db.SampleInside(f.Path)), folders.ToDictionary(f => f.Path, f => FoldersInside(f.Path, spaces))));
+        // Folders holding OneDrive files that are only online: found below, with the samples.
+        var online = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Removing a folder removes the folders in it, so one holding a folder that has to stay stays too.
+        string Holds(SpaceFolder f)
+        {
+            foreach (var (s, g) in inside[f.Path])
+            {
+                if (g.Kind == SpaceKind.Program) return $"It holds {Path.GetFileName(g.Path)}, {s.Name}'s plugin file: Uninstall removes that.";
+                var rows = _rowSpace.Where(r => r.Value.Key == s.Key).Select(r => r.Key).ToList();
+                // A plugin without a row of its own counts as used (see WithSpace).
+                var why = rows.Count == 0 ? $"Your projects still use {s.Name}." : rows.Select(r => InUse(g, r)).FirstOrDefault(w => w.Length > 0);
+                if (why is { Length: > 0 }) return $"It holds {Path.GetFileName(g.Path)}, which stays. {why}";
+            }
+            return "";
+        }
+        string Why(SpaceFolder f) =>
+            PluginSpace.IsInstallFolder(f.Path) ? "Inside Program Files: Uninstall removes this."
+            : protectedRoots.FirstOrDefault(r => DiskSpace.IsInside(f.Path, r) || DiskSpace.IsInside(r, f.Path)) is { } mine ? $"Part of your folder {mine}."
+            : holding[f.Path] is { } sample ? $"A project uses a sample in it ({Path.GetFileName(sample)})."
+            : online.Contains(f.Path) ? OnlineOnlyWhy
+            : InUse(f, p) is { Length: > 0 } use ? use
+            : Holds(f);
+        // A sample found here under another path than the project's (an old PC's, a drive with a new letter) counts too.
+        // That means walking the folders, so only the ones that would be offered are, as a job you can stop. They're looked
+        // through for OneDrive files that are only online too: the Recycle Bin can't keep those, and OneDrive deletes them everywhere.
+        var walk = folders.Where(f => Why(f).Length == 0).Select(f => f.Path).ToList();
+        if (walk.Count > 0)
+        {
+            using var stop = new CancellationTokenSource();
+            var activity = _main.Activities.Start($"Checking {p.Name}'s folders", "Looking for samples your projects use", cancel: stop.Cancel);
+            try
+            {
+                var (named, onlineOnly) = await Task.Run(() =>
+                    (_db.SamplesNamedIn(walk, stop.Token), walk.Where(f => HasOnlineOnly(f, stop.Token)).ToList()), stop.Token);
+                foreach (var (folder, sample) in named) holding[folder] = sample;
+                online.UnionWith(onlineOnly);
+                activity.Finish($"Checked {p.Name}'s folders");
+            }
+            catch (OperationCanceledException)
+            {
+                activity.Stop($"Stopped checking {p.Name}'s folders", "Nothing was removed.");
+                return;
+            }
+        }
         var items = folders.Select(f =>
         {
-            var why =
-                PluginSpace.IsInstallFolder(f.Path) ? "Inside Program Files: Uninstall removes this."
-                : protectedRoots.FirstOrDefault(r => DiskSpace.IsInside(f.Path, r) || DiskSpace.IsInside(r, f.Path)) is { } mine ? $"Part of your folder {mine}."
-                : holding[f.Path] is { } sample ? $"A project uses a sample in it ({Path.GetFileName(sample)})."
-                : f.Shared && !f.SharedWith.All(NoProjects) ? $"Shared with {NamesOf(f.SharedWith)}, which your projects use."
-                : f.Kind == SpaceKind.Sounds && (p.Projects > 0 || !f.SharedWith.All(NoProjects))
-                    ? $"Sounds stay while a project uses {p.Name}: {(p.Projects == 1 ? "1 project does" : $"{p.Projects} projects do")}."
-                : !p.Unused ? $"Your projects still use {p.Name}."
-                : "";
+            var why = Why(f);
             return new CleanupItem(f, why, ticked: why.Length == 0 && f.Kind == SpaceKind.Sounds);
         }).ToList();
         var card = new SpaceCard(this)
@@ -234,13 +292,30 @@ public sealed partial class PluginsViewModel
         Card = card;
     }
 
+    internal const string OnlineOnlyWhy = "Some of its files are only online in OneDrive. They can't go to the Recycle Bin: removing them deletes them from OneDrive everywhere.";
+
+    /// <summary>Whether a folder has OneDrive files that are only online (tests stand in for OneDrive, which only Windows has).</summary>
+    internal static Func<string, CancellationToken, bool> HasOnlineOnly = DiskSpace.HasOnlineOnly;
+
+    /// <summary>The listed folders, any plugin's, that are inside this one (a maker's folder holds its plugins' own).</summary>
+    internal static List<(PluginSpaceInfo Space, SpaceFolder Folder)> FoldersInside(string path, IReadOnlyList<PluginSpaceInfo> spaces) =>
+        spaces.SelectMany(s => s.Folders.Where(g => DiskSpace.IsInside(g.Path, path) && !DiskSpace.IsInside(path, g.Path)).Select(g => (s, g))).ToList();
+
+    /// <summary>
+    /// The look again before a Keep or Delete card removes anything, in the background. It always carries on through the
+    /// window's queue, even when the look was over before it was awaited, so a Keep pressed meanwhile is always seen
+    /// (CI caught a look that quick deleting what Keep had kept).
+    /// </summary>
+    static ConfiguredTaskAwaitable<T> LookAgain<T>(Func<T> look) =>
+        Task.Run(look).ConfigureAwait(ConfigureAwaitOptions.ContinueOnCapturedContext | ConfigureAwaitOptions.ForceYielding);
+
     async Task DeleteAsync(SpaceCard card, string key)
     {
         var picked = card.Items.Where(i => i.IsTicked).ToList();
-        card.Busy = true;
+        card.Busy = card.Removing = true;
         var problems = await Task.Run(() => RecycleBin.SendMany(picked.Select(i => i.Folder.Path).ToList()));
         var freed = picked.Where(i => !problems.ContainsKey(i.Folder.Path)).Sum(i => i.Folder.Bytes);
-        Card = null;
+        if (Card == card) Card = null;   // a card opened since stays open
         if (freed > 0) _main.Activities.Start("Cleaned up").Finish($"Freed {DiskSpace.Text(freed)}", "They're in the Recycle Bin if you want them back.", "Open Recycle Bin", _main.OpenRecycleBin);
         // One card for what stayed, not one each (a spare-copies clean up can hold hundreds).
         if (problems.Count > 0)
@@ -259,22 +334,30 @@ public sealed partial class PluginsViewModel
         if ((row ?? Selected) is not { } p || !_rowSpace.TryGetValue(p, out var space)) return;
         Selected = p;
         SideTab = 1;
-        var found = await Task.Run(() => Uninstallers.For(p.Name, p.Vendor, Uninstallers.All()));
+        var installed = Items.Where(i => i.Installed).Select(i => i.Name).ToList();
+        var found = await Task.Run(() => Uninstallers.For(p.Name, p.Vendor, Uninstallers.All(), installed));
         var files = space.Folders.Where(f => f.Kind == SpaceKind.Program).ToList();
+        // Binning a WaveShell would take every Waves plugin with it.
+        var shell = IsShell(space);
         var card = new SpaceCard(this)
         {
             Title = $"Uninstall {p.Name}?",
             Warning = p.Projects > 0 ? $"{(p.Projects == 1 ? "1 project uses" : $"{p.Projects} projects use")} it. They'll open with {p.Name} missing." : "",
+            Empty = found.Count == 0 && shell ? "Every Waves plugin lives in this one file, so it isn't removed here. Use Waves Central to remove Waves plugins." : "",
         };
         if (found.Count > 0)
         {
-            card.Intro = "This runs its own uninstaller, the same one Windows Settings › Apps uses. It opens in its own window and may ask questions.";
+            // Another version's uninstaller (Ozone 11's for Ozone 9) would remove a plugin you may still use: you pick it yourself.
+            var other = Uninstallers.IsOtherVersion(p.Name, found[0], installed);
+            card.Intro = "This runs its own uninstaller, the same one Windows Settings › Apps uses. It opens in its own window and may ask questions." +
+                         (other ? $" These look like other versions of {p.Name}, not this one. Pick one only if you're sure it's the right one." : "");
             card.Uninstallers = found;
-            card.PickedUninstaller = found[0];
+            card.MustPick = other;
+            card.PickedUninstaller = other ? null : found[0];
             card.ConfirmText = "Uninstall";
             card.Confirm = () => RunUninstallerAsync(card, space.Key, files.Select(f => f.Path).ToList());
         }
-        else
+        else if (!shell)
         {
             card.Intro = OperatingSystem.IsWindows()
                 ? "Windows has no uninstaller for it that's still there. Its plugin files can go to the Recycle Bin instead (Windows may ask for administrator rights):"
@@ -361,32 +444,104 @@ public sealed partial class PluginsViewModel
     [ObservableProperty] string _spareSizeText = "";
     [ObservableProperty] string _spareTitle = "";
     [ObservableProperty] string _spareNote = "";
+    /// <summary>Each format the spare copies are in, biggest first: one press reviews just that format (F12 note, 27 Oct).</summary>
+    [ObservableProperty] IReadOnlyList<SpareFormat> _spareFormats = [];
+    /// <summary>
+    /// Spare copies haven't been looked for yet. They're found when every plugin is measured, so until then the page said
+    /// nothing about them, and nothing said what to do (Solomon's F12 note, 27 Oct: "its not obvious what you have to do to
+    /// see that come up").
+    /// </summary>
+    [ObservableProperty] bool _sparesUnknown;
 
     /// <summary>The spare copies line: plugin files in formats none of your projects use.</summary>
-    void BuildSpares(IReadOnlyList<SpareCopy> spares)
+    void BuildSpares(IReadOnlyList<SpareCopy> spares, bool lookedFor)
     {
         _spares = spares;
         HasSpares = spares.Count > 0;
+        SparesUnknown = !lookedFor;
         SpareSizeText = DiskSpace.Text(spares.Sum(c => c.Bytes));
         SpareTitle = spares.Count == 1 ? "1 spare plugin copy" : $"{spares.Count} spare plugin copies";
-        var formats = spares.GroupBy(c => c.Format).OrderByDescending(g => g.Count()).Select(g => $"{g.Count()} {g.Key}");
-        SpareNote = $"{string.Join(", ", formats)}: copies in a format none of your projects use. The format they use stays.";
+        SpareFormats = spares.GroupBy(c => c.Format, StringComparer.OrdinalIgnoreCase)
+                             .Select(g => new SpareFormat(g.Key, g.Count(), g.Sum(c => c.Bytes), this))
+                             .OrderByDescending(f => f.Bytes).ThenBy(f => f.Format, StringComparer.OrdinalIgnoreCase).ToList();
+        SpareNote = "Copies in a format none of your projects use; the format they use stays. Press a format to review just those.";
     }
 
-    /// <summary>Opens the Keep or Delete card for the spare copies, every one ticked.</summary>
+    /// <summary>The stored spare copies again, after a measure that changed no size (the rows stay as they are).</summary>
+    public async Task RefreshSparesAsync()
+    {
+        var (spares, lookedFor) = await UiWork.Run(() => (StillThere(_db.SpareCopyList()), _db.SpareCopiesLookedFor()));
+        BuildSpares(spares, lookedFor);
+    }
+
+    static IReadOnlyList<SpareCopy> StillThere(IReadOnlyList<SpareCopy> spares) =>
+        spares.Where(c => File.Exists(c.Path) || Directory.Exists(c.Path)).ToList();
+
+    /// <summary>Look now: finds the spare copies on its own, without measuring every plugin.</summary>
     [RelayCommand]
-    void ReviewSpares()
+    async Task LookForSpares()
+    {
+        using var stop = new CancellationTokenSource();
+        var activity = _main.Activities.Start("Looking for spare plugin copies", "Plugin files in formats none of your projects use", cancel: stop.Cancel);
+        try
+        {
+            var spares = await Task.Run(() => StillThere(new SpaceMeter(_db).LookForSpareCopies(stop.Token)), stop.Token);
+            BuildSpares(spares, lookedFor: true);
+            if (spares.Count == 0) activity.Finish("No spare plugin copies", "Every plugin file is in a format your projects use.");
+            else activity.Finish($"Found {SpareTitle}", $"{SpareSizeText} you could free: Review… shows each one.");
+        }
+        catch (OperationCanceledException)
+        {
+            activity.Stop("Stopped looking for spare copies", "Press Look now to start again.");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            activity.Fail("Couldn't look for spare copies", e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Opens the Keep or Delete card for the spare copies: every one ticked, or with a <paramref name="format"/> only that
+    /// format's. The card's format ticks take a whole format on or off at once.
+    /// </summary>
+    [RelayCommand]
+    void ReviewSpares(string? format)
     {
         if (_spares.Count == 0) return;
+        var order = SpareFormats.Select(f => f.Format).ToList();
+        // The format picked comes first, so the card opens on the ones it ticked.
+        var items = _spares.OrderBy(c => format is not null && c.Format.Equals(format, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                           .ThenBy(c => order.FindIndex(f => f.Equals(c.Format, StringComparison.OrdinalIgnoreCase)))
+                           .ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+                           .Select(c => new CleanupItem(new SpaceFolder(c.Path, SpaceKind.Program, c.Bytes, [], false), "",
+                                                        ticked: format is null || c.Format.Equals(format, StringComparison.OrdinalIgnoreCase),
+                                                        label: $"{c.Name} · {c.Format}", detail: c.Why) { Group = c.Format })
+                           .ToList();
         var card = new SpaceCard(this)
         {
-            Title = "Remove spare plugin copies?",
-            Intro = "Each is a plugin in a format none of your projects use; the format they use stays installed. They go to the Recycle Bin." +
+            Title = format is null ? "Remove spare plugin copies?" : $"Remove the spare {format} copies?",
+            Intro = "Each is a plugin in a format none of your projects use; the format they use stays installed. Tick a whole format, or one at a time. " +
+                    "They go to the Recycle Bin." +
                     (OperatingSystem.IsWindows() ? " They're in Program Files, so Windows asks once for administrator rights." : ""),
-            Items = _spares.Select(c => new CleanupItem(new SpaceFolder(c.Path, SpaceKind.Program, c.Bytes, [], false), "", ticked: true,
-                                                        label: $"{c.Name} · {c.Format}", detail: c.Why)).ToList(),
+            Items = items,
         };
-        card.Confirm = () => DeleteAsync(card, "");
+        card.Confirm = async () =>
+        {
+            // Checked again against your projects as they are now: the list is made once a week, and a song saved since
+            // may use a format it calls spare.
+            card.Busy = true;
+            var now = await LookAgain(() => new SpaceMeter(_db).SpareCopiesNow());
+            if (Card != card) return;   // Keep was pressed while it looked
+            var still = now.Select(c => c.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var stale = card.Items.Where(i => i.IsTicked && !still.Contains(i.Folder.Path)).ToList();
+            foreach (var i in stale) i.IsTicked = false;
+            var kept = stale.Where(i => File.Exists(i.Path) || Directory.Exists(i.Path)).ToList();
+            _db.SaveSpareCopies(now);
+            if (kept.Count > 0)
+                _main.Activities.Failed(kept.Count == 1 ? $"Kept {kept[0].Name}" : $"Kept {kept.Count} of the copies",
+                                        "Your projects use those formats now, so they stay.");
+            await DeleteAsync(card, "");
+        };
         card.Refresh();
         Card = card;
     }
@@ -446,6 +601,8 @@ public sealed partial class CleanupItem : ObservableObject
     }
 
     readonly string? _label;
+    /// <summary>The group it's ticked with on the card (a spare copy's format), or "".</summary>
+    public string Group { get; init; } = "";
     public SpaceFolder Folder { get; }
     public string Why { get; }
     /// <summary>Why it can go ("Your projects use its VST3 (412 projects); none use this VST2.").</summary>
@@ -483,14 +640,23 @@ public sealed partial class SpaceCard(PluginsViewModel owner) : ObservableObject
         {
             _items = value;
             foreach (var i in value) i.Card = this;
+            Groups = value.Where(i => i.Group.Length > 0).GroupBy(i => i.Group, StringComparer.OrdinalIgnoreCase)
+                          .Select(g => new CleanupGroup(g.Key, g.ToList())).ToList();
         }
     }
+
+    /// <summary>The items' groups (the spare copies' formats), each ticked or unticked as a whole.</summary>
+    public IReadOnlyList<CleanupGroup> Groups { get; private set; } = [];
+    public bool HasGroups => Groups.Count > 0;
 
     /// <summary>For Uninstall: the uninstallers that may be this plugin's, best first, and the one picked.</summary>
     public IReadOnlyList<Uninstaller> Uninstallers { get; set; } = [];
     public bool HasUninstallers => Uninstallers.Count > 0;
-    public bool HasChoice => Uninstallers.Count > 1;
+    public bool HasChoice => Uninstallers.Count > 1 || MustPick;
+    /// <summary>None is picked for you (they're for other versions): even a single one is yours to pick.</summary>
+    public bool MustPick { get; set; }
     [ObservableProperty] Uninstaller? _pickedUninstaller;
+    partial void OnPickedUninstallerChanged(Uninstaller? value) => Refresh();
 
     /// <summary>"Delete 35.5 GB", or "Uninstall".</summary>
     [ObservableProperty] string _confirmText = "";
@@ -515,6 +681,7 @@ public sealed partial class SpaceCard(PluginsViewModel owner) : ObservableObject
         var bytes = Items.Where(i => i.IsTicked).Sum(i => i.Folder.Bytes);
         ConfirmText = bytes > 0 ? $"Delete {DiskSpace.Text(bytes)}" : "Delete";
         CanConfirm = bytes > 0;
+        foreach (var g in Groups) g.Sync();
     }
 
     /// <summary>A card whose button always reads the same ("Move 4.5 GB"), ready to press.</summary>
@@ -525,10 +692,79 @@ public sealed partial class SpaceCard(PluginsViewModel owner) : ObservableObject
         CanConfirm = true;
     }
 
-    [RelayCommand] void Keep() => owner.CloseCard();
+    /// <summary>Once things are going to the Recycle Bin, Keep can't call them back, so it isn't offered.</summary>
+    [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(KeepCommand))] bool _removing;
+
+    [RelayCommand(CanExecute = nameof(CanKeep))] void Keep() => owner.CloseCard();
+
+    bool CanKeep() => !Removing;
 
     [RelayCommand(CanExecute = nameof(CanRun))]
     Task Run() => Confirm?.Invoke() ?? Task.CompletedTask;
 
     bool CanRun() => CanConfirm && !Busy;
+}
+
+/// <summary>One format of the spare copies, on the line over the list: pressing it reviews just those.</summary>
+public sealed partial class SpareFormat(string format, int count, long bytes, PluginsViewModel owner)
+{
+    public string Format => format;
+    public long Bytes => bytes;
+    /// <summary>"AAX · 90 · 1.2 GB".</summary>
+    public string Text => $"{format} · {count} · {DiskSpace.Text(bytes)}";
+    public string Tip => $"Review the {count} spare {format} {(count == 1 ? "copy" : "copies")}, with only those ticked";
+
+    [RelayCommand] void Review() => owner.ReviewSparesCommand.Execute(format);
+}
+
+/// <summary>
+/// A group of a Keep or Delete card's items (the spare copies in one format) with one tick for them all: ticked when they
+/// all are, unticked when none are, and in between otherwise (Solomon's F12 note, 27 Oct: "option select spare copies by
+/// plugin type so if theres a type you definatelty dont use you can delete them easily").
+/// </summary>
+public sealed partial class CleanupGroup : ObservableObject
+{
+    public CleanupGroup(string name, IReadOnlyList<CleanupItem> items)
+    {
+        Name = name;
+        Items = items;
+        _isTicked = State();
+    }
+
+    public string Name { get; }
+    public IReadOnlyList<CleanupItem> Items { get; }
+    /// <summary>"AAX · 90 · 1.2 GB".</summary>
+    public string Text => $"{Name} · {Items.Count} · {DiskSpace.Text(Items.Sum(i => i.Folder.Bytes))}";
+    public string Tip => $"Tick or untick all {Items.Count} {Name} at once";
+
+    bool? _isTicked;
+    bool _setting;
+
+    /// <summary>True when every one is ticked, false when none is, null for some. Setting it ticks or unticks them all.</summary>
+    public bool? IsTicked
+    {
+        get => _isTicked;
+        set
+        {
+            if (value is not { } on || _setting) return;
+            _setting = true;
+            try
+            {
+                foreach (var i in Items.Where(i => i.CanTick)) i.IsTicked = on;
+            }
+            finally { _setting = false; }
+            Sync();
+        }
+    }
+
+    bool? State()
+    {
+        var ticked = Items.Count(i => i.IsTicked);
+        return ticked == 0 ? false : ticked == Items.Count(i => i.CanTick) ? true : null;
+    }
+
+    internal void Sync()
+    {
+        if (!_setting) SetProperty(ref _isTicked, State(), nameof(IsTicked));
+    }
 }

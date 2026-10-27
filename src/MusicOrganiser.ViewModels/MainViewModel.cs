@@ -102,7 +102,8 @@ public sealed partial class MainViewModel : ObservableObject
         if (_selectedNav.Page == Midi || _selectedNav.Page == Playground) Midi.Opened();
         if (_selectedNav.Page == Playground) Playground.Opened();
         _ = Projects.ReloadAsync();   // read in the background: 16,000 projects held the window up as it opened
-        _projectsShown = _soundsShown = db.ProjectsRevision;   // those two pages read the library as they open
+        _ = Samples.ReloadAsync();    // the same: it adds up every project's samples
+        _projectsShown = _soundsShown = _samplesShown = db.ProjectsRevision;   // those pages read the library as they open
 
         // First run: send people to Settings to add their project folders.
         if (_db.Roots().Count == 0 && _db.GetList(Scanner.SampleFoldersKey).Count == 0) SelectedNav = Nav[^1];
@@ -292,7 +293,7 @@ public sealed partial class MainViewModel : ObservableObject
     public void RefreshAll() => _ = RefreshAllAsync();
 
     // The library revision each page last read (-1: not yet), so a scan that changed nothing leaves the pages alone.
-    long _projectsShown, _soundsShown, _samplesShown = -1;
+    long _projectsShown, _soundsShown, _samplesShown;
     (long, long) _pluginsShown = (-1, -1);
 
     /// <summary>
@@ -581,8 +582,10 @@ public sealed partial class MainViewModel : ObservableObject
                 card = Activities.Start("Measuring plugin sizes", cancel: cts.Cancel);
                 var before = SpaceSignature(_db.PluginSpaces().Values);
                 var after = SpaceSignature(await Task.Run(() => meter.MeasurePlugins(ct: cts.Token), cts.Token));
-                // Only when a size changed: the page keeps its rows (and your place in them) otherwise.
+                // Only when a size changed: the page keeps its rows (and your place in them) otherwise. The spare copies
+                // are looked for by the same measure, so they're shown either way.
                 if (before != after) await Plugins.ReloadAsync();
+                else await Plugins.RefreshSparesAsync();
             }
             var progress = new Progress<(int Done, int Total)>(p =>
             {

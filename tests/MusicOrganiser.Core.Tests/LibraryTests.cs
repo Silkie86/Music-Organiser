@@ -1,6 +1,7 @@
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins;
 using Xunit;
 
 namespace MusicOrganiser.Core.Tests;
@@ -88,6 +89,29 @@ public class LibraryTests : IDisposable
         var projects = _db.Projects();
         Assert.Equal(["Bitwig Studio", "FL Studio", "Studio One"], projects.Select(p => p.Daw).Order());
         Assert.All(projects, p => Assert.Null(p.Error));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_project_folder_taken_out_while_a_scan_reads_it_stays_off_the_list(bool full)
+    {
+        // The scan makes its to-do list once, at the start: a folder taken out (and its projects with it) while it is still
+        // reading must not have them put back by the scan's later batches, on a first read or on "Re-read everything".
+        var other = Fixtures.TempDir();
+        Fixtures.FlStudioProject(other, "Keeper");
+        _db.AddRoot(other);
+        var scanner = new Scanner(_db);
+        if (full) scanner.ScanProjects();
+
+        scanner.ScanProjects(new Each<ScanProgress>(p =>
+        {
+            if (p.Stage != "Finding projects" || !_db.Roots().Contains(_root)) return;
+            _db.RemoveRoot(_root);
+            _db.RemoveProjects(_db.ProjectsOnlyIn(_root, _db.Roots()));
+        }), full);
+
+        Assert.Equal(["Keeper"], _db.Projects().Select(p => p.Name));
     }
 
     [Fact]
@@ -636,6 +660,52 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void A_plugin_counts_as_installed_by_the_ID_its_song_saved_whatever_the_song_or_the_plugin_calls_it()
+    {
+        // Solomon (F12 note, 27 Oct 2026): "you should go by the plugin id not the name to see if something is missing".
+        // His "Click Clack" showed Waves' TG12345 missing: the song calls it one thing and his WaveShell another.
+        var folder = Path.Combine(_root, "Click Clack");
+        Directory.CreateDirectory(folder);
+        Fixtures.StudioOneInserts(folder);
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        string[] names = ["WaveShell1-VST3 14.0_x64", "TG12345 Stereo", "WaveShell1-VST 14.0_x64", "Kramer Tape", "FabFilter Pro-Q 2"];
+        IEnumerable<string> Missing() =>
+            _db.Project(_db.Projects().Single(p => p.Name == "Click Clack").Id)!.Plugins.Where(p => !p.Installed).Select(p => p.Name).Order();
+
+        // By name alone: Studio One's own effects and the renamed Pro-Q 2 insert are there, the two Waves plugins aren't.
+        _db.ReplaceInstalledPlugins(names);
+        Assert.Equal(["Abbey Road EMI TG12345 Ch Stereo", "Kontakt 5 16out", "Kramer Tape Stereo"], Missing());
+
+        // The plugin scanner reads the VST3 WaveShell: the same names as before, but now the song's TG12345 has its ID.
+        _db.SavePluginScan(new(@"C:\Program Files\Common Files\VST3\WaveShell1-VST3 14.0_x64.vst3",
+            [new ScannedPlugin { Format = "VST3", Id = "56535454473553746731323334352073", Name = "TG12345 Stereo" }]), new PluginStamp(1, 1));
+        _db.ReplaceInstalledPlugins(names);
+        Assert.Equal(["Kontakt 5 16out", "Kramer Tape Stereo"], Missing());
+
+        // Kramer Tape's VST3 isn't in it, but the VST2 shell has the same four letters: a Waves plugin, with a WaveShell here.
+        _db.SavePluginScan(new(@"C:\Program Files\VSTPlugins\WaveShell1-VST 14.0_x64.dll",
+            [new ScannedPlugin { Format = "VST2", Id = "TAPS", Name = "Kramer Tape" }]), new PluginStamp(1, 1));
+        scanner.ScanProjects(full: true);   // the song read again knowing that
+        Assert.Equal(["Kontakt 5 16out"], Missing());   // the one plugin really not here
+        Assert.Equal(1, _db.Projects().Single(p => p.Name == "Click Clack").MissingPlugins);
+    }
+
+    [Fact]
+    public void An_older_build_of_the_app_can_still_save_plugins_into_the_library_this_one_opened()
+    {
+        // Solomon switches between test builds on the same library. Older ones write a project's plugins without naming the
+        // columns, so a column added to plugins (the plugins' IDs, say) would fail their every scan: the IDs have a table of their own.
+        var file = Path.Combine(_root, "Old.song");
+        _db.Upsert(new LibraryDb.IndexedFile(file, 1, 100, null, null, [], []));
+        using var sql = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_db.FilePath}");
+        sql.Open();
+        using var cmd = sql.CreateCommand();
+        cmd.CommandText = "INSERT INTO plugins VALUES ((SELECT id FROM projects WHERE name = 'Old'), 'Pro EQ', 'proeq', '', 2, 'Native', '', 1)";
+        Assert.Equal(1, cmd.ExecuteNonQuery());
+    }
+
+    [Fact]
     public void FindsLocalMatchesForMissingSamples()
     {
         // Outside the projects' folders: a sample in a project's folder tree counts as found.
@@ -681,7 +751,7 @@ public class LibraryTests : IDisposable
     {
         var scanner = new Scanner(_db);
         scanner.ScanProjects();
-        Assert.Equal("6", _db.GetSetting("reader_version:FL Studio"));
+        Assert.Equal("7", _db.GetSetting("reader_version:FL Studio"));
         Directory.CreateDirectory(Path.Combine(_root, "bounce"));
         File.WriteAllBytes(Path.Combine(_root, "bounce", "Kick 01.wav"), [0]);
 
@@ -691,7 +761,7 @@ public class LibraryTests : IDisposable
         _db.SetSetting("reader_version:FL Studio", "1");   // as a library last read with the older FL reader
         scanner.ScanProjects();
         Assert.Equal(0, _db.Projects().Single(x => x.Daw == "FL Studio").MissingSamples);
-        Assert.Equal("6", _db.GetSetting("reader_version:FL Studio"));
+        Assert.Equal("7", _db.GetSetting("reader_version:FL Studio"));
     }
 
     [Fact]
@@ -702,6 +772,192 @@ public class LibraryTests : IDisposable
         File.Delete(Path.Combine(_root, "Night Drive.flp"));
         scanner.ScanProjects();
         Assert.True(_db.Projects().Single(p => p.Daw == "FL Studio").FileMissing);
+    }
+
+    [Fact]
+    public void Finding_matches_reads_the_sample_index_once_until_it_changes_and_still_finds_longer_names()
+    {
+        // Fix looks for every missing sample in turn: the 350,000-file index was read again for each one.
+        var lib = Path.Combine(Fixtures.TempDir(), "Samples");
+        _db.ReplaceSampleIndex([Path.Combine(lib, "Big Room Festival Kick 01.wav"), Path.Combine(lib, "Snare.wav")]);
+        var first = _db.SampleIndex();
+        Assert.Same(first, _db.SampleIndex());
+        _db.UpdateSampleIndex([Path.Combine(lib, "Hat.wav")]);   // gone, as the folder watcher says
+        Assert.NotSame(first, _db.SampleIndex());
+
+        // A name much longer than the missing one still matches by how it ends.
+        var matches = MatchFinder.ForSample(_db, @"C:\Old Drive\Kick 01.wav");
+        Assert.Equal([Path.Combine(lib, "Big Room Festival Kick 01.wav")], matches.Select(m => m.Candidate));
+        Assert.Equal(MatchFinder.Similarity("kick01", "bigroomfestivalkick01"), matches[0].Score);
+    }
+
+    [Fact]
+    public void A_folder_holds_a_projects_sample_saved_under_the_drives_old_letter()
+    {
+        // Clean up never offers a folder holding a sample a project uses. Songs saved when the drive was F: name
+        // F:\Splice\Sounds, and the app finds those samples on K: now, so K:\Splice\Sounds holds them too.
+        var info = new ProjectInfo { Daw = "FL Studio" };
+        _db.Upsert(new LibraryDb.IndexedFile(Path.Combine(_root, "Old.flp"), 5, 1, info, null, [(@"F:\Splice\Sounds\Kick_01.wav", true)], []));
+        Assert.Equal(@"F:\Splice\Sounds\Kick_01.wav", _db.SampleInside(@"K:\Splice\Sounds"));
+        Assert.Equal(@"F:\Splice\Sounds\Kick_01.wav", _db.SampleInside("k:/Splice/Sounds/"));
+        Assert.Equal(@"F:\Splice\Sounds\Kick_01.wav", _db.SampleInside(@"F:\Splice"));
+        Assert.Null(_db.SampleInside(@"K:\Splice\Sound"));   // a folder whose name only starts the same
+        Assert.Null(_db.SampleInside(@"K:\Splice\Other"));
+        Assert.Null(_db.SampleInside(@"K:\Other\Splice\Sounds"));
+    }
+
+    [Fact]
+    public void Projects_using_a_sample_are_found_by_its_path_without_reading_every_sample()
+    {
+        // "Projects using it" on the Sounds page: with no index on the path, every sample of 16,700 projects was read.
+        new Scanner(_db).ScanProjects();
+        var fl = _db.Project(_db.Projects().Single(x => x.Daw == "FL Studio").Id)!;
+        Assert.Equal([fl.Summary.Id], _db.ProjectsUsingSample(fl.Samples[0].Path.ToUpperInvariant()));
+        string Plan()
+        {
+            using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_db.FilePath};Mode=ReadOnly;Pooling=False");
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "EXPLAIN QUERY PLAN SELECT DISTINCT project_id FROM samples WHERE path = 'x' COLLATE NOCASE";
+            using var r = cmd.ExecuteReader();
+            var plan = "";
+            while (r.Read()) plan += r.GetString(3);
+            return plan;
+        }
+        // Built once the window shows, not as the library opens: the first time it takes seconds with nothing on screen.
+        Assert.DoesNotContain("ix_samples_path", Plan());
+        _db.BuildNewIndexes();
+        Assert.Contains("ix_samples_path", Plan());
+        Assert.Equal([fl.Summary.Id], _db.ProjectsUsingSample(fl.Samples[0].Path.ToUpperInvariant()));
+    }
+
+    [Fact]
+    public void A_project_marked_missing_is_back_when_its_file_comes_back_unchanged()
+    {
+        // Put back from the Recycle Bin, or moved out and back: the same size and time as when it was read.
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        var song = Path.Combine(_root, "Night Drive.flp");
+        var away = Path.Combine(Fixtures.TempDir(), "Night Drive.flp");
+        bool Missing() => _db.Projects().Single(p => p.Path == song).FileMissing;
+
+        File.Move(song, away);
+        scanner.ScanProjects();
+        Assert.True(Missing());
+        File.Move(away, song);
+        scanner.ScanProjects();
+        Assert.False(Missing());
+
+        // The same through the folder watcher.
+        File.Move(song, away);
+        Assert.Equal((0, 1), scanner.Update([song]));
+        Assert.True(Missing());
+        File.Move(away, song);
+        Assert.Equal((1, 0), scanner.Update([song]));
+        Assert.False(Missing());
+    }
+
+    [Fact]
+    public void A_renamed_song_folder_keeps_the_songs_status_rating_notes_and_tags()
+    {
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        void Organise(ProjectSummary p, string status)
+        {
+            p.Status = status;
+            p.Rating = 4;
+            p.Notes = "keep the bass";
+            _db.SaveOrganisation(p);
+            _db.SetTags(p.Id, ["dub"]);
+        }
+        var bitwig = _db.Projects().Single(p => p.Daw == "Bitwig Studio");
+        Organise(bitwig, "Mixing");
+
+        // Renamed in Explorer: the watcher gives up on so many changes and a scan runs.
+        var folder = Path.GetDirectoryName(bitwig.Path)!;
+        Directory.Move(folder, folder + " (done)");
+        scanner.ScanProjects();
+        var moved = _db.Projects().Single(p => p.Daw == "Bitwig Studio");
+        Assert.Equal((bitwig.Id, Path.Combine(folder + " (done)", Path.GetFileName(bitwig.Path)), false),
+                     (moved.Id, moved.Path, moved.FileMissing));
+        Assert.Equal(("Mixing", 4, "keep the bass"), (moved.Status, moved.Rating, moved.Notes));
+        Assert.Contains("dub", moved.Tags);
+
+        // Moved into another folder, as the folder watcher sees it: gone from one place, new in the other.
+        var fl = _db.Projects().Single(p => p.Daw == "FL Studio");
+        Organise(fl, "Finished");
+        var to = Path.Combine(_root, "Finished", Path.GetFileName(fl.Path));
+        Directory.CreateDirectory(Path.GetDirectoryName(to)!);
+        File.Move(fl.Path, to);
+        scanner.Update([fl.Path, to]);
+        var flMoved = _db.Projects().Single(p => p.Daw == "FL Studio");
+        Assert.Equal((fl.Id, to, false, "Finished"), (flMoved.Id, flMoved.Path, flMoved.FileMissing, flMoved.Status));
+
+        // A copy, with the first still there, is a song of its own.
+        File.Copy(to, Path.Combine(_root, Path.GetFileName(to)));
+        scanner.ScanProjects();
+        Assert.Equal(2, _db.Projects().Count(p => p.Daw == "FL Studio" && !p.FileMissing));
+    }
+
+    [Fact]
+    public void A_scan_stopped_while_reading_a_renamed_folder_marks_none_of_its_songs_missing()
+    {
+        // Stopped half way through a renamed folder, the songs whose new place wasn't read yet still count where they
+        // were: marked missing, a plugin only they use would look unused, and Clean up would tick its sounds.
+        var folder = Directory.CreateDirectory(Path.Combine(_root, "Album")).FullName;
+        for (var i = 0; i < 120; i++) Fixtures.FlStudioProject(folder, $"Tune {(char)('a' + i % 26)}{(char)('a' + i / 26)}");
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        var before = _db.Projects().Where(p => p.Name.StartsWith("Tune ")).ToDictionary(p => p.Name, p => p.Id);
+        Directory.Move(folder, folder + " (done)");
+        using var stop = new CancellationTokenSource();
+        var reading = new Each<ScanProgress>(p => { if (p.Stage == "Reading projects") stop.Cancel(); });
+        Assert.ThrowsAny<OperationCanceledException>(() => scanner.ScanProjects(reading, ct: stop.Token));
+        var songs = _db.Projects().Where(p => p.Name.StartsWith("Tune ")).ToList();
+        Assert.Equal(120, songs.Count);
+        Assert.DoesNotContain(songs, p => p.FileMissing);
+        Assert.Contains(songs, p => p.Path.StartsWith(folder + " (done)"));   // what it read was found moved
+        Assert.Contains(songs, p => p.Path.StartsWith(folder + Path.DirectorySeparatorChar));   // the rest wait for the next scan
+
+        // The next scan finishes: each song carries on as itself in its new place.
+        scanner.ScanProjects();
+        songs = _db.Projects().Where(p => p.Name.StartsWith("Tune ")).ToList();
+        Assert.Equal(120, songs.Count);
+        Assert.All(songs, p => Assert.Equal((before[p.Name], false, true), (p.Id, p.FileMissing, p.Path.StartsWith(folder + " (done)"))));
+    }
+
+    [Fact]
+    public void Projects_in_a_folder_the_scan_couldnt_read_arent_marked_missing()
+    {
+        new Scanner(_db).ScanProjects();
+        var none = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _db.MarkMissingFiles(none, [_root], unreadable: [Path.Combine(_root, "Loop Idea"), _root]);
+        Assert.All(_db.Projects(), p => Assert.False(p.FileMissing));
+        // Only that folder's projects keep how they were.
+        var unread = Path.Combine(_root, "Loop Idea");
+        _db.MarkMissingFiles(none, [_root], unreadable: [unread]);
+        Assert.All(_db.Projects(), p => Assert.Equal(!p.Path.StartsWith(unread + Path.DirectorySeparatorChar), p.FileMissing));
+        Assert.Contains(_db.Projects(), p => !p.FileMissing);
+    }
+
+    [Fact]
+    public void A_folder_whose_name_only_starts_like_a_project_folder_isnt_inside_it()
+    {
+        // A folder taken out of the list keeps its projects. "Projects Old" isn't inside "Projects", so a scan of
+        // "Projects" mustn't mark them missing, nor read "Old\Templates" as a templates folder of its own.
+        var old = _root + " Old";
+        Directory.CreateDirectory(old);
+        var song = Fixtures.FlStudioProject(old, "Old Song");
+        _db.Upsert(Scanner.Analyse(song));
+        var deleted = Path.Combine(_root, "Night Drive.flp");
+        new Scanner(_db).ScanProjects();
+        File.Delete(deleted);
+
+        new Scanner(_db).ScanProjects();
+        Assert.False(_db.Projects().Single(p => p.Path == song).FileMissing);
+        Assert.True(_db.Projects().Single(p => p.Path == deleted).FileMissing);   // one really gone still is
+        Assert.False(Scanner.IsIgnored(Path.Combine(old, "Templates", "Song.flp"), [_root]));
+        Assert.True(Scanner.IsIgnored(Path.Combine(_root, "Templates", "Song.flp"), [_root]));
     }
 
     [Fact]

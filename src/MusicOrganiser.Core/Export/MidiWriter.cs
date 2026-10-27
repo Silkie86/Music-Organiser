@@ -23,7 +23,9 @@ public static class MidiWriter
         {
             var ch = (byte)(i++ % 16);
             var events = new List<(long, byte[])> { (0, Meta(0x03, name)) };
-            foreach (var n in notes)
+            // FL step-sequencer steps have no length (1 tick here, which a sampler barely sounds): each plays a sixteenth,
+            // as the MIDI page reads them, or up to the next step on the same key or the clip's end if that's sooner.
+            foreach (var n in FlClips.Lengthen(notes, clip.End ?? long.MaxValue, _ => clip.Ppq / 4))
             {
                 events.Add((n.Start, [(byte)(0x90 | ch), (byte)n.Key, (byte)n.Velocity]));
                 events.Add((n.Start + n.Length, [(byte)(0x80 | ch), (byte)n.Key, 0]));

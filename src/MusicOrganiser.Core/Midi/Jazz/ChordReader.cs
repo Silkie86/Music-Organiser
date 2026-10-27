@@ -119,7 +119,10 @@ public static class ChordReader
             _approach = new bool[_count];
             Array.Fill(_low, int.MaxValue);
 
-            var notes = input.Where(n => !n.Muted).Select(n => (Note: Unpush(n), n.Length)).OrderBy(x => x.Note.Start).ToList();
+            // A note that starts before tick 0 sounds from it.
+            var notes = input.Where(n => !n.Muted && n.Start + n.Length > 0)
+                             .Select(n => n.Start < 0 ? n with { Start = 0, Length = n.Start + n.Length } : n)
+                             .Select(n => (Note: Unpush(n), n.Length)).OrderBy(x => x.Note.Start).ToList();
             var inBeat = new List<(int Key, long Overlap, bool Struck, long Length)>?[_count];
             foreach (var (n, whole) in notes)
             {

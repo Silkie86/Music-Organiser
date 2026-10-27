@@ -15,8 +15,12 @@ public enum Confidence
 
 public enum PluginKind { Unknown, Instrument, Effect, NoteEffect }
 
+/// <param name="Id">
+/// The plugin's own ID as the project saved it, written the way the plugin scanner writes it (<see cref="Plugins.ScannedPlugin.Id"/>):
+/// a VST3 class ID or a VST2's four letters. Empty when the project doesn't say (or the reader doesn't read it yet).
+/// </param>
 public sealed record PluginRef(string Name, string Vendor = "", PluginKind Kind = PluginKind.Unknown,
-                               string Format = "", string Path = "");
+                               string Format = "", string Path = "", string Id = "");
 
 /// <param name="Muted">Muted in the piano roll, so it doesn't play (FL Studio).</param>
 /// <param name="Step">Entered in FL's step sequencer: it has no length of its own and FL plays it until its sound ends.</param>

@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using MusicOrganiser.Core.Sounds;
 using MusicOrganiser.ViewModels;
@@ -18,7 +19,7 @@ public partial class SoundsView : UserControl, IShortcutPage
         // change: the grid re-selects rows by itself when you sort or come back to this page.
         SoundGrid.AddHandler(PointerReleasedEvent, OnRowClicked, RoutingStrategies.Bubble, handledEventsToo: true);
         SoundGrid.AddHandler(PointerPressedEvent, OnPressCounted, RoutingStrategies.Tunnel, handledEventsToo: true);
-        // A right-click picks the row under it, so its menu (Play, To Bitwig, Show file) is about that sound.
+        // A right-click picks the row under it, so its menu (Play, To Bitwig, Favourite…) is about that sound.
         SoundGrid.AddHandler(PointerPressedEvent, OnRowRightPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
         // Held arrow keys play each sound they pass (after the grid has moved on to it); letting go plays the one you stop on.
         SoundGrid.AddHandler(KeyDownEvent, OnGridKeyPacing, RoutingStrategies.Tunnel);
@@ -94,6 +95,60 @@ public partial class SoundsView : UserControl, IShortcutPage
     }
 
     SoundsViewModel? Vm => DataContext as SoundsViewModel;
+    SoundsViewModel? _watched;
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+        if (_watched is not null) _watched.PropertyChanged -= OnVmChanged;
+        _watched = Vm;
+        if (_watched is not null) _watched.PropertyChanged += OnVmChanged;
+        ShowColumnSort();
+    }
+
+    void OnVmChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SoundsViewModel.ColumnSort)) ShowColumnSort();
+    }
+
+    // ---- right-click menus ----
+
+    /// <summary>Each line shows its key as it is now (Settings › Shortcuts can change them).</summary>
+    void OnSoundMenuOpening(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (sender is ContextMenu menu && Vm is { } vm) ShortcutKeys.ShowKeys(menu.Items, vm.Shortcuts);
+    }
+
+    // Once the menu has closed, so the keyboard stays in the box rather than going back to the list.
+    void OnTagMenu(object? sender, RoutedEventArgs e) =>
+        Dispatcher.UIThread.Post(() => RunShortcut("sounds.tag", false), DispatcherPriority.Input);
+
+    // ---- list order ----
+
+    /// <summary>
+    /// A header click sorts in the view model, off the UI thread, so the list and Ctrl+Up/Down keep one order. Left to the
+    /// grid, it sorted every sound on the UI thread (seconds on a whole library), and the next search dropped it.
+    /// </summary>
+    void OnGridSorting(object? sender, DataGridColumnEventArgs e)
+    {
+        e.Handled = true;
+        if (Vm is { } vm && e.Column.SortMemberPath is { Length: > 0 } column) vm.SortByColumn(column);
+    }
+
+    // Each column's own header, before an arrow was put on it.
+    readonly Dictionary<DataGridColumn, object?> _headers = [];
+
+    /// <summary>An arrow on the header the list is sorted by, pointing the way it goes.</summary>
+    void ShowColumnSort()
+    {
+        foreach (var column in SoundGrid.Columns)
+        {
+            if (!_headers.TryGetValue(column, out var header)) _headers[column] = header = column.Header;
+            column.Header = Vm is { ColumnSort: { } sort } vm && column.SortMemberPath == sort
+                ? $"{header} {(vm.ColumnSortDescending ? "▼" : "▲")}".Trim()
+                : header;
+        }
+    }
 
     // ---- tiles ----
 

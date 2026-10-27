@@ -125,6 +125,22 @@ public class FlRepairTests
     }
 
     [Fact]
+    public void RepairRefusesACopyWhoseEventsDontReadBackAsTheTwoSavesPutTogether()
+    {
+        // The older save is FL 24's, which writes event 172 with four bytes; the damaged one is FL 25's, which reads it
+        // with three, so the older save's last channel would come out garbled in the copy.
+        Fixtures.FlpBuilder Start(string version) => new Fixtures.FlpBuilder().Ascii(199, version).Word(66, 140)
+            .Word(64, 0).Byte(21, 0).Ascii(192, "Kick").Ascii(201, "Sampler")
+            .Word(64, 1).Byte(21, 0).Ascii(192, "Snare").Ascii(201, "Sampler");
+        var older = Start("24.1.0").Word(64, 2).Byte(21, 0).Ascii(192, "Bass").Ascii(201, "3x Osc").Dword(172, 0x01020304)
+            .Data(233, Fixtures.PlaylistItem25(0, 1, 384)).Data(236, new byte[12]).Build();
+        var damaged = Unfinished(Start("25.1.0").Build());
+
+        var e = Assert.Throws<InvalidDataException>(() => FlStudioReader.Repair(damaged, older));
+        Assert.Contains("wasn't saved", e.Message);
+    }
+
+    [Fact]
     public void RepairWithoutAnOlderSaveWritesTheHeaderAndKeepsWhatThereIs()
     {
         var damaged = Unfinished(Song(2, NewNotes, finished: false));
@@ -152,6 +168,28 @@ public class FlRepairTests
         Assert.Equal(2, shown.ClipCount);
         // A whole save shows its own.
         Assert.Empty(ArrangementReader.ReadNewestWhole(Path.Combine(dir, "i dont know_6.flp"))[0].Notes);
+    }
+
+    [Theory]
+    [InlineData(new byte[] { 0xff, 0xff, 0xff, 0xff, 0x0f })]         // a size that goes negative
+    [InlineData(new byte[] { 0xff, 0xff, 0xff, 0xff, 0x07 })]         // int.MaxValue: adding it to where it starts overflows
+    [InlineData(new byte[] { 0x80, 0x80, 0x80, 0x80, 0x80, 0x01 })]   // a size that doesn't end after five bytes
+    public void ADamagedEventSizeIsReadAsTheFileEndingThere(byte[] junk)
+    {
+        var dir = Fixtures.TempDir();
+        var whole = Song(3, OldNotes, finished: true);
+        File.WriteAllBytes(Path.Combine(dir, "i dont know_6.flp"), whole);
+        // An older save that's whole apart from junk after its mixer.
+        byte[] damaged = [.. whole, 0xd0, .. junk, .. new byte[8]];
+        BinaryPrimitives.WriteInt32LittleEndian(damaged.AsSpan(18), damaged.Length - 22);
+        var junky = Path.Combine(dir, "i dont know_7.flp");
+        File.WriteAllBytes(junky, damaged);
+        var newest = Path.Combine(dir, "i dont know_8.flp");
+        File.WriteAllBytes(newest, Unfinished(Song(2, NewNotes, finished: false)));
+
+        Assert.Equal(FlStudioReader.ReadEvents(whole).Events.Select(e => e.Id), FlStudioReader.ReadEvents(damaged).Events.Select(e => e.Id));
+        Assert.Equal(["Kick", "Snare", "Bass"], new FlStudioReader().Read(junky).Tracks);
+        Assert.Equal(junky, FlStudioReader.WholeOlderSave(newest));
     }
 
     [Fact]

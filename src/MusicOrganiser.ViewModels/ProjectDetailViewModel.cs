@@ -20,6 +20,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public const string StepsUntilNextNoteKey = "bitwig_steps_until_next_note";
     /// <summary>"1" when converting swaps older versions of the template's synth (Serum) for the template's own (Serum 2).</summary>
     public const string UpgradeSynthsKey = "bitwig_upgrade_synths";
+    /// <summary>What's remembered about a Bitwig copy the app converted (<see cref="Exporter.Written"/>), by its file.</summary>
+    public static string BitwigConvertKey(string file) => $"bitwig_convert:{file}";
     public static string DawExeKey(string daw) => $"daw_exe:{daw}";
 
     readonly LibraryDb _db;
@@ -37,6 +39,16 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public SongSpaceViewModel Space => _space ??= new(_db, _main, Item);
     /// <summary>The "MIDI that fits" tab's small playground stops when another page shows (<paramref name="closed"/>: another song is picked, so it goes).</summary>
     public void LeftSongMidi(bool closed) { if (closed) _songMidi?.Closed(); else _songMidi?.Left(); }
+
+    // Cancelled when another song is picked and this panel goes (see Closed).
+    readonly CancellationTokenSource _gone = new();
+
+    /// <summary>Another song is picked, so this panel goes: its small playground stops, and reading it started for itself is dropped.</summary>
+    public void Closed()
+    {
+        _gone.Cancel();
+        LeftSongMidi(closed: true);
+    }
     /// <summary>The plugin list as shown: synths that play no notes in the song are hidden until asked for.</summary>
     [ObservableProperty] IReadOnlyList<PluginRow> _visiblePlugins = [];
     [ObservableProperty] bool _showSilent;
@@ -124,17 +136,27 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         LoadPendingFix();
     }
 
+    /// <summary>How long a song stays picked before its FL project is read for <see cref="FindSilentSynthsAsync"/>.</summary>
+    static readonly TimeSpan SilentSynthsWait = TimeSpan.FromMilliseconds(300);
+
     /// <summary>
     /// FL projects often keep synths on channels that never play. Any instrument whose
     /// channel has no notes in the song is tucked away behind a toggle.
     /// </summary>
+    /// <remarks>
+    /// It reads the whole project, so only for a song that stays picked a moment: holding the arrow key down the list
+    /// would otherwise start one read per song passed, each for a panel already gone.
+    /// </remarks>
     async Task FindSilentSynthsAsync()
     {
         if (Readers.For(Item.Path) is not { } reader) return;
+        var gone = _gone.Token;
+        var path = Item.Path;
         try
         {
-            var players = await Task.Run(() => MidiChannel.Players(reader.ExtractChannels(Item.Path)));
-            if (players.Count == 0) return;
+            await Task.Delay(SilentSynthsWait, gone);
+            var players = await Task.Run(() => MidiChannel.Players(reader.ExtractChannels(path)), gone);
+            if (gone.IsCancellationRequested || players.Count == 0) return;
             foreach (var p in Plugins) p.Silent = p.IsInstrument && p.Installed && !players.Contains(p.Name);   // a missing one stays in sight
             SilentCount = Plugins.Count(p => p.Silent);
             ApplyPluginFilter();
@@ -361,18 +383,30 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             var path = save.Path;
             var untilNextNote = _db.GetSetting(StepsUntilNextNoteKey) == "1";
             var upgrade = _db.GetSetting(UpgradeSynthsKey) == "1";
-            // A new convert saved over a copy Bitwig has open would look unchanged there, so it gets a fresh name.
+            // A new convert saved over a copy Bitwig has open would look unchanged there, and one saved over a copy changed
+            // in Bitwig (or another song's with the same name) would lose that work, so either way it gets a fresh name.
             var bitwig = _main.Live.State(DawState.Bitwig);
             if (bitwig is { Running: false }) OpenedInBitwig.Clear();
-            var saveAs = Exporter.BitwigName(path, n => OpenedInBitwig.Contains(n) ||
-                                                        bitwig is { Answering: true } && bitwig.Project.Trim().Equals(n, StringComparison.OrdinalIgnoreCase));
-            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote, upgrade, saveAs));
+            var opened = OpenedInBitwig.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var front = bitwig is { Answering: true } ? bitwig.Project.Trim() : null;
+            var plain = Exporter.BitwigName(path, _ => false);
+            // Looking at the earlier converts reads the disk, so it's done off the window's thread with the converting.
+            var (file, leftOut, saveAs, kept) = await Task.Run(() =>
+            {
+                var exportRoot = ExportRoot;
+                bool Kept(string n) => Exporter.BitwigFile(path, exportRoot, n) is var f && !Exporter.CanSaveOver(path, f, _db.GetSetting(BitwigConvertKey(f)));
+                var saveAs = Exporter.BitwigName(path, n => opened.Contains(n) || n.Equals(front, StringComparison.OrdinalIgnoreCase) || Kept(n));
+                var kept = saveAs != plain && Kept(plain);
+                var (file, leftOut) = Exporter.BitwigFromFl(path, exportRoot, File.ReadAllBytes(template), untilNextNote, upgrade, saveAs);
+                _db.SetSetting(BitwigConvertKey(file), Exporter.Written(path, file));
+                return (file, leftOut, saveAs, kept);
+            });
             await OpenWithBitwig(_db, file);
             OpenedInBitwig.Add(saveAs);
-            var renamed = saveAs != Exporter.BitwigName(path, _ => false)
-                ? " It has a new name because Bitwig may still have an earlier convert open, and would show that one instead. " +
-                  "Close the old one without saving."
-                : "";
+            var renamed = saveAs == plain ? ""
+                : kept ? " It has a new name so the earlier convert isn't saved over: it may have been changed in Bitwig, or be another song's with the same name."
+                : " It has a new name because Bitwig may still have an earlier convert open, and would show that one instead. " +
+                  "Close the old one without saving.";
             Message = $"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig.{renamed}" +
                       (leftOut.Count == 0 ? "" : $" Not carried over: {string.Join("; ", leftOut.Take(4))}" +
                                                  $"{(leftOut.Count > 4 ? $"; and {leftOut.Count - 4} more, listed in the notes saved next to it" : "")}.");
@@ -569,10 +603,11 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         _main.Projects.ShowOnly(_db.ProjectsUsingPlugin(row.Name), $"Projects using {row.Name}");
     }
 
-    /// <summary>Re-read just this project, e.g. after recovering a sample.</summary>
-    public void Reindex()
+    /// <summary>Re-read just this project, e.g. after recovering a sample, in the background (a big FL project takes seconds).</summary>
+    public async Task ReindexAsync()
     {
-        _db.Upsert(Scanner.Analyse(Item.Path));
+        var path = Item.Path;
+        await Task.Run(() => _db.Upsert(Scanner.Analyse(path)));
         _main.RefreshAll();
     }
 }
@@ -622,16 +657,19 @@ public sealed partial class SampleRow(LibraryDb db, ProjectSample s, ProjectItem
     public ObservableCollection<MatchRow> Matches { get; } = new();
     [ObservableProperty] string _matchMessage = "";
 
+    /// <summary>Files in your sample folders that could be this one, looked for in the background (it compares every sound you have).</summary>
     [RelayCommand]
-    void FindMatches()
+    async Task FindMatches()
     {
         Matches.Clear();
-        if (db.SampleIndexCount() == 0)
+        MatchMessage = "Looking on your drives…";
+        var matches = await UiWork.Run(() => db.SampleIndexCount() == 0 ? null : MatchFinder.ForSample(db, s.Path));
+        if (matches is null)
         {
             MatchMessage = "Add your sample folders in Settings and index them to search your drives.";
             return;
         }
-        foreach (var m in MatchFinder.ForSample(db, s.Path)) Matches.Add(new MatchRow(m, this));
+        foreach (var m in matches) Matches.Add(new MatchRow(m, this));
         MatchMessage = Matches.Count == 0 ? "No similar files in your sample folders." : "";
     }
 
@@ -654,10 +692,16 @@ public sealed partial class SampleRow(LibraryDb db, ProjectSample s, ProjectItem
             return;
         }
         if (!await Ui.Current.Confirm($"Copy\n{candidate}\n\ninto the project folder as\n{FileName}?", "Recover sample")) return;
-        File.Copy(candidate, target);
+        // Off the window's thread: a big file, or one on a network drive, takes a while.
+        try { await Task.Run(() => File.Copy(candidate, target)); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            MatchMessage = $"Couldn't copy it: {e.Message}";
+            return;
+        }
         MatchMessage = "Copied. Your DAW will find it next time the project opens.";
         owner.Activities.Done($"Copied {FileName} into the project folder", "Your DAW will find it next time the project opens.");
-        owner.Reindex();
+        await owner.ReindexAsync();
     }
 }
 
