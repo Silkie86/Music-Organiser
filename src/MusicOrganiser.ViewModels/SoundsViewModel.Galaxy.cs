@@ -11,6 +11,7 @@ public sealed partial class SoundsViewModel
     public const string Galaxy = "Galaxy";
     public const string GalaxyColourKey = "galaxy_colour";
     public const string GalaxyBasisKey = "galaxy_basis";
+    public const string GalaxyBrightnessKey = "galaxy_brightness";
 
     /// <summary>What places the stars. Both is the default; without CLAP's listening it falls back to the measurements, with a warning.</summary>
     public static IReadOnlyList<string> PlacedByChoices { get; } = [SoundOrganiser.Both, SoundOrganiser.ClapOnly, SoundOrganiser.OwnOnly];
@@ -38,6 +39,24 @@ public sealed partial class SoundsViewModel
     /// <summary>"Download CLAP" or "Deep listen": the button beside the warning.</summary>
     [ObservableProperty] string _galaxyWarningAction = "";
     public bool HasGalaxyWarning => GalaxyWarning.Length > 0;
+
+    /// <summary>
+    /// How bright the stars are: 1 as the galaxy measures it, from half that up to four times (the button beside the
+    /// galaxy, or [ and ]). Solomon, 2026-10-27: "should be able to increase brightness of stars".
+    /// </summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(GalaxyBrightnessText))] double _galaxyBrightness = 1;
+    public string GalaxyBrightnessText => $"{GalaxyBrightness * 100:0}%";
+
+    partial void OnGalaxyBrightnessChanged(double value) => _db.SetSetting(GalaxyBrightnessKey, ((int)Math.Round(value * 100)).ToString());
+
+    [RelayCommand]
+    void ResetGalaxyBrightness() => GalaxyBrightness = 1;
+
+    static double ReadBrightness(string? saved) =>
+        int.TryParse(saved, out var percent) && percent > 0 ? Math.Clamp(percent / 100.0, DimmestStars, BrightestStars) : 1;
+
+    public const double DimmestStars = 0.5, BrightestStars = 4;
+
     /// <summary>Which tab of the Sounds page is showing (0 Library, 1 Rediscover, 2 Kit builder…).</summary>
     [ObservableProperty] int _tabIndex;
 

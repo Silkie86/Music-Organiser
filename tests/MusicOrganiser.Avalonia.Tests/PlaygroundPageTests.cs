@@ -319,9 +319,14 @@ public sealed class PlaygroundPageTests : IDisposable
         public string? Playing { get; private set; }
         public double? Position => Playing is null ? null : 0;
         public void Seek(double seconds) { }
-        public void Play(string path, double startSeconds = 0) => Playing = LastPath = path;
-        /// <summary>The last file played.</summary>
+        public void Play(string path, double startSeconds = 0)
+        {
+            Playing = LastPath = path;
+            LastStart = startSeconds;
+        }
+        /// <summary>The last file played, and where in it it started.</summary>
         public static string? LastPath;
+        public static double LastStart;
         /// <summary>The last sound played: how long it was.</summary>
         public static (int Samples, int Rate)? Last;
         public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0)

@@ -219,6 +219,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         _viewMode = db.GetSetting(ViewKey) is List or Galaxy ? db.GetSetting(ViewKey)! : Tiles;
         _placedBy = db.GetSetting(GalaxyBasisKey) is { } basis && PlacedByChoices.Contains(basis) ? basis : SoundOrganiser.Both;
         _colourBy = db.GetSetting(GalaxyColourKey) is { } c && ColourChoices.Contains(c) ? c : "Type";
+        _galaxyBrightness = ReadBrightness(db.GetSetting(GalaxyBrightnessKey));
         _weights = LikedWeights.FromJson(db.GetSetting(LikedWeightsKey));
         _clock = Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(30), FollowPlayback);
         _ = StartAsync();
@@ -1436,9 +1437,16 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
             var years = await Task.Run(() => Core.Sounds.Rediscover.Years(org).Select(y => y.ToString()).ToList());
             if (!years.SequenceEqual(Years.Skip(1)))
             {
+                // Not a change of year: the box lets go of its choice while its list is replaced, and that set off a
+                // second shuffle that replaced these suggestions under the mouse moments after they showed.
                 var keep = Year;
-                Years = [AnyYear, .. years];
-                Year = Years.Contains(keep) ? keep : AnyYear;
+                _replacingYears = true;
+                try
+                {
+                    Years = [AnyYear, .. years];
+                    Year = Years.Contains(keep) ? keep : AnyYear;
+                }
+                finally { _replacingYears = false; }
             }
             Suggestions = await suggesting;
             if (Suggestions.Count == 0)
@@ -1470,13 +1478,14 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     /// <summary>How long after the last change (a slider still moving) the list shuffles again.</summary>
     public static TimeSpan ShuffleDelay { get; set; } = TimeSpan.FromMilliseconds(400);
     int _changes;
+    bool _replacingYears;
 
     // Once there's a list, changing what it's picked by picks it again, so the slider visibly does something.
     partial void OnTypeChanged(string value) => ShuffleSoon();
     partial void OnYearChanged(string value)
     {
         if (value is null) Year = AnyYear;   // the list of years was replaced under the box
-        else ShuffleSoon();
+        else if (!_replacingYears) ShuffleSoon();
     }
     partial void OnAdventureChanged(double value) => ShuffleSoon();
     partial void OnIncludeRarelyUsedChanged(bool value) => ShuffleSoon();

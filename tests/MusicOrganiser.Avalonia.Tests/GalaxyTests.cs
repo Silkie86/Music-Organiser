@@ -132,4 +132,28 @@ public sealed class GalaxyTests
                 Assert.Equal(EveryStar(stars, from, dx, dy)?.Sound.Id, canvas.NextStar(from, dx, dy)?.Sound.Id);
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void Square_brackets_make_the_stars_brighter_or_dimmer_within_their_range()
+    {
+        // Solomon, 2026-10-27: "should be able to increase brightness of stars"
+        var stars = Enumerable.Range(0, 50).Select(i => new GalaxyStar(new Sound { Id = i, Path = $"/lib/Star {i}.wav" }, i / 50f, 0.5f, 0xFF8080FF, true)).ToList();
+        var canvas = new GalaxyCanvas { Stars = stars };
+        var window = new Window { Content = canvas, Width = 600, Height = 400 };
+        window.Show();
+        canvas.Focus();
+        Dispatcher.UIThread.RunJobs();
+        void Press(Key key, PhysicalKey physical, string text)
+        {
+            window.KeyPress(key, RawInputModifiers.None, physical, text);
+            window.KeyRelease(key, RawInputModifiers.None, physical, text);
+        }
+        Press(Key.OemCloseBrackets, PhysicalKey.BracketRight, "]");
+        Assert.Equal(1.25, canvas.Brightness);
+        for (var i = 0; i < 20; i++) Press(Key.OemCloseBrackets, PhysicalKey.BracketRight, "]");
+        Assert.Equal(SoundsViewModel.BrightestStars, canvas.Brightness);
+        for (var i = 0; i < 20; i++) Press(Key.OemOpenBrackets, PhysicalKey.BracketLeft, "[");
+        Assert.Equal(SoundsViewModel.DimmestStars, canvas.Brightness);
+        window.Close();
+    }
 }

@@ -317,7 +317,7 @@
                                         <views:GalaxyCanvas x:Name="Galaxy" Stars="{Binding Stars}" Regions="{Binding Regions}" Trail="{Binding Trail}"
                                                             Constellation="{Binding Constellation}" Selected="{Binding Selected}"
                                                             SweepCommand="{Binding SweepCommand}" SweepEndedCommand="{Binding EndSweepCommand}" AheadCommand="{Binding WarmAheadCommand}"
-                                                            PickCommand="{Binding PickStarCommand}" SweepMs="{Binding SweepMs}" />
+                                                            PickCommand="{Binding PickStarCommand}" SweepMs="{Binding SweepMs}" Brightness="{Binding GalaxyBrightness}" />
                                         <!-- What placed the stars, and how many show. -->
                                         <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10" Padding="10,6,12,7" IsHitTestVisible="False"
                                                 CornerRadius="{DynamicResource RadiusM}" Background="{StaticResource SurfaceBrush}" Opacity="0.88">
@@ -339,6 +339,25 @@
                                             <Button Classes="icon" Command="{Binding RemapCommand}" ToolTip.Tip="Lay the galaxy out again from scratch">
                                                 <Path Data="M20,11 A8,8 0 1 0 17.6,16.6 M20,5 L20,11 L14,11" Stroke="{Binding $parent[Button].Foreground}"
                                                       StrokeThickness="1.8" StrokeLineCap="Round" StrokeJoin="Round" Width="13" Height="13" Stretch="Uniform" />
+                                            </Button>
+                                            <Button Classes="icon" ToolTip.Tip="How bright the stars are (] brighter, [ dimmer)">
+                                                <Path Data="M8,12 A4,4 0 1 0 16,12 A4,4 0 1 0 8,12 M12,2.5 L12,4.5 M12,19.5 L12,21.5 M2.5,12 L4.5,12 M19.5,12 L21.5,12 M5.3,5.3 L6.7,6.7 M17.3,17.3 L18.7,18.7 M5.3,18.7 L6.7,17.3 M17.3,6.7 L18.7,5.3"
+                                                      Stroke="{Binding $parent[Button].Foreground}" StrokeThickness="1.8" StrokeLineCap="Round" Width="14" Height="14" Stretch="Uniform" />
+                                                <Button.Flyout>
+                                                    <Flyout Placement="LeftEdgeAlignedTop">
+                                                        <StackPanel Width="220" Spacing="6">
+                                                            <DockPanel>
+                                                                <TextBlock DockPanel.Dock="Right" Text="{Binding GalaxyBrightnessText}" FontFamily="{DynamicResource NumberFont}"
+                                                                           Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
+                                                                <TextBlock Text="Star brightness" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                                            </DockPanel>
+                                                            <Slider Minimum="{x:Static vm:SoundsViewModel.DimmestStars}" Maximum="{x:Static vm:SoundsViewModel.BrightestStars}"
+                                                                    Value="{Binding GalaxyBrightness}" ToolTip.Tip="Left dimmer, right brighter: the keys [ and ] do the same over the galaxy" />
+                                                            <Button Content="As measured" Command="{Binding ResetGalaxyBrightnessCommand}" HorizontalAlignment="Right"
+                                                                    ToolTip.Tip="Back to 100%: as bright as the galaxy works out for what's in view" />
+                                                        </StackPanel>
+                                                    </Flyout>
+                                                </Button.Flyout>
                                             </Button>
                                         </StackPanel>
                                         <!-- The key to the colours. -->
@@ -596,7 +615,9 @@
                                     <TextBlock Text="Show" VerticalAlignment="Center" Margin="0,0,6,0" />
                                     <ComboBox ItemsSource="{x:Static vm:RediscoverViewModel.HowManyChoices}" SelectedItem="{Binding HowMany}" Width="80"
                                               Margin="0,0,12,0" VerticalAlignment="Center" ToolTip.Tip="How many sounds each shuffle picks" />
-                                    <Button Content="{Binding ShuffleText}" Classes="accent" Command="{Binding ShuffleCommand}" VerticalAlignment="Center" />
+                                    <Button Content="{Binding ShuffleText}" Classes="accent" Command="{Binding ShuffleCommand}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                    <CheckBox Content="Autoplay" IsChecked="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).AutoPlay}"
+                                              VerticalAlignment="Center" ToolTip.Tip="Play each sound as you arrow onto it (a click always plays)" />
                                 </WrapPanel>
                                 <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBusy}" Height="3" MinHeight="3" Margin="0,0,0,6" />
                                 <TextBlock Text="{Binding Intro}" Classes="muted" FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap" />
@@ -609,13 +630,13 @@
                                         <TextBlock Text="{Binding EmptyTitle}" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,12,0,4" />
                                         <TextBlock Text="{Binding EmptyText}" Classes="muted" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="420" />
                                     </StackPanel>
-                                    <ListBox ItemsSource="{Binding Suggestions}" Background="Transparent" SelectionMode="Multiple"
-                                             views:FileDrag.Source="{Binding Parent}">
+                                    <!-- Click anywhere on a row to hear it, as on the Library's tiles (on its waveform, from there); double-click
+                                         keeps it playing; the arrow keys go up and down the list, playing each with Autoplay on. -->
+                                    <ListBox x:Name="SuggestionList" ItemsSource="{Binding Suggestions}" Background="Transparent" SelectionMode="Multiple"
+                                             views:FileDrag.Source="{Binding Parent}" DoubleTapped="OnSuggestionDoubleTapped">
                                         <ListBox.ItemTemplate>
                                             <DataTemplate x:DataType="snd:Suggestion">
-                                                <!-- Click anywhere on the row to hear it, as on the Library's tiles; double-click keeps it playing. -->
-                                                <DockPanel Margin="0,2" Background="Transparent" Cursor="Hand" ToolTip.Tip="{Binding Sound.Path}"
-                                                           PointerPressed="OnSuggestionPressed" DoubleTapped="OnSuggestionDoubleTapped">
+                                                <DockPanel Margin="0,2" Background="Transparent" Cursor="Hand" ToolTip.Tip="{Binding Sound.Path}">
                                                     <Button DockPanel.Dock="Left" Content="▶" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,10,0"
                                                             Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).PlayCommand}"
                                                             CommandParameter="{Binding Sound}" />
@@ -627,7 +648,8 @@
                                                             Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).ToBitwigCommand}"
                                                             CommandParameter="{Binding Sound}" />
                                                     <views:MiniWave DockPanel.Dock="Right" Width="200" Height="26" Margin="12,0,4,0" VerticalAlignment="Center"
-                                                                    Peaks="{Binding Sound.Analysis.Waveform}" Fill="{Binding Sound.Type, Converter={StaticResource TypeBrush}}" />
+                                                                    Peaks="{Binding Sound.Analysis.Waveform}" Fill="{Binding Sound.Type, Converter={StaticResource TypeBrush}}"
+                                                                    Cursor="Ibeam" ToolTip.Tip="Click to play from here" />
                                                     <StackPanel VerticalAlignment="Center">
                                                         <TextBlock>
                                                             <Run Text="{Binding Sound.Name, Mode=OneWay}" FontWeight="SemiBold" />

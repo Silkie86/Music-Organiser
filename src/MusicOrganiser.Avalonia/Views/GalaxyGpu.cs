@@ -20,11 +20,14 @@ static class GalaxyGpu
     /// <summary>Unknown until the first try; then whether the graphics card is drawing. MO_GALAXY_CPU=1 forces the processor.</summary>
     public static bool? Available = Environment.GetEnvironmentVariable("MO_GALAXY_CPU") is not null ? false : null;
 
-    /// <summary>What one frame needs: the stars (flat lists, never changed once made) and where the camera is.</summary>
+    /// <summary>
+    /// What one frame needs: the stars (flat lists, never changed once made), where the camera is, and the brightness
+    /// chosen beside the galaxy (1 as measured: see <see cref="GainFor"/>).
+    /// </summary>
     public sealed record Frame(
         float[] Xs, float[] Ys, float[] Rgb, float[] Weight, int[] CellStart, int[] CellItems, int Grid,
         (int X0, int Y0, int X1, int Y1) Cells, double Scale, double OffsetX, double OffsetY,
-        int Width, int Height, float Core, float Glow, float Gain, bool Moving = false);
+        int Width, int Height, float Core, float Glow, float Brightness, bool Moving = false);
 
     // Stamps are stored at a fraction of their brightness so a crowd can pile onto one pixel before the layer runs out
     // of room; the shader scales back up.
@@ -49,15 +52,18 @@ static class GalaxyGpu
 
     static SKRuntimeEffect? _effect;
     static SKImage? _dot;
-    static (GRContext Gr, int W, int H, SKSurface Full, SKSurface Small, SKSurface Blurred, SKSurface Sky)? _surfaces;
+    static (GRContext? Gr, int W, int H, SKSurface Full, SKSurface Small, SKSurface Blurred, SKSurface Sky)? _surfaces;
 
     // The stars' stamps (Full and its blurred quarter-size copy) and the view they were stamped at. Stamping 366,000
     // stars is the slow part (Skia turns each into its own pair of triangles on the processor, every time), so it's
     // done only when the view really needs it: the brightness settings are the shader's, applied after, and a stamp of
     // the whole galaxy (zoomed out, every star on it) is just slid along when you drag, never stamped again.
-    static (float[] Xs, float[] Rgb, float[] Weight, double X, double Y, double Scale, bool Whole)? _stamped;
+    static (float[] Xs, float[] Rgb, float[] Weight, double X, double Y, double Scale, bool Whole, float Gain)? _stamped;
     // The finished sky on screen, and what made it, so a frame that changes nothing (a hover, a pulse) just shows it.
     static object? _skyKey;
+    // The last settled sky with every star on it, and the view it was made for.
+    static SKImage? _whole;
+    static (float[] Xs, float[] Rgb, float[] Weight, double X, double Y, double Scale)? _wholeAt;
     static (double X, double Y, double Scale) _skyAt;
     // What the last stamp cost (working out the list plus stamping), deciding whether the next waits for a thread.
     static double _costMs = double.MaxValue;
@@ -73,6 +79,9 @@ static class GalaxyGpu
         public Frame? For;
         public bool Whole;
         public double BuildMs;
+        // How the stars' light is spread, on a grid of 2-pixel squares, and the gain worked out from it.
+        public float[] Light = [];
+        public float Gain = 1.7f;
     }
 
     static readonly object BuildGate = new();
@@ -152,6 +161,9 @@ static class GalaxyGpu
         var n = 0;
         var xforms = into.Xforms.Length >= count ? into.Xforms : new SKRotationScaleMatrix[count];
         var colours = into.Colours.Length >= count ? into.Colours : new SKColor[count];
+        int lw = w / 2 + 1, lh = h / 2 + 1;
+        var light = into.Light.Length >= lw * lh ? into.Light : new float[lw * lh];
+        Array.Clear(light, 0, lw * lh);
         const float size = 0.28f;   // 16 px × 0.28 ≈ 4.5 px
         for (var cy = f.Cells.Y0; cy <= f.Cells.Y1; cy++)
             for (var k = f.CellStart[cy * f.Grid + f.Cells.X0]; k < f.CellStart[cy * f.Grid + f.Cells.X1 + 1]; k++)
@@ -164,6 +176,8 @@ static class GalaxyGpu
                 // The colour keeps its full hue; the brightness rides in the alpha, which the stamp multiplies through.
                 colours[n] = new SKColor((byte)(f.Rgb[3 * i] * 255), (byte)(f.Rgb[3 * i + 1] * 255), (byte)(f.Rgb[3 * i + 2] * 255),
                                          (byte)Math.Clamp(f.Weight[i] * Stamp * 255, 1, 255));
+                light[Math.Clamp((int)y >> 1, 0, lh - 1) * lw + Math.Clamp((int)x >> 1, 0, lw - 1)] +=
+                    f.Weight[i] * MathF.Max(f.Rgb[3 * i], MathF.Max(f.Rgb[3 * i + 1], f.Rgb[3 * i + 2]));
                 n++;
             }
         // Skia draws every entry of the lists, so they're cut to the stars that landed on screen (only when that changes).
@@ -175,10 +189,42 @@ static class GalaxyGpu
             sprites = new SKRect[n];
             Array.Fill(sprites, new SKRect(0, 0, 16, 16));
         }
-        (into.Xforms, into.Colours, into.Sprites, into.For) = (xforms, colours, sprites, f);
+        (into.Xforms, into.Colours, into.Sprites, into.For, into.Light) = (xforms, colours, sprites, f, light);
+        into.Gain = GainFor(light, lw * lh);
         // Every star in the galaxy landed on it: sliding this stamp along shows exactly what stamping again would.
         into.Whole = n == f.CellStart[f.Grid * f.Grid];
         into.BuildMs = timer.Elapsed.TotalMilliseconds;
+    }
+
+    /// <summary>
+    /// How bright to show the stars, from how their light is spread over the view (<paramref name="light"/>: each
+    /// 2-pixel square's stars added up), set so a typical lit square shows clearly, as the processor's painting does
+    /// (<see cref="GalaxyCanvas"/>'s Paint): bright where few stars are, held back where they crowd so a cloud keeps its
+    /// light and dark parts. "Typical" is the middle one (the median), so the tight clumps of near-identical sounds a
+    /// big library has don't decide it. The old guess, stars per pixel of the whole view, turned zoomed-out stars down
+    /// to a third and left most of them too faint to see (Solomon, 2026-10-27: "stars can go missing when you zoom in
+    /// and out").
+    /// </summary>
+    internal static float GainFor(float[] light, int count)
+    {
+        // A histogram in quarter-octaves from 1/256 up, so finding the middle doesn't sort a million squares.
+        const int bins = 128;
+        Span<int> histogram = stackalloc int[bins];
+        var lit = 0;
+        for (var k = 0; k < count; k++)
+        {
+            var v = light[k];
+            if (v <= 0.004f) continue;
+            histogram[Math.Clamp((int)((MathF.Log2(v) + 8) * 4), 0, bins - 1)]++;
+            lit++;
+        }
+        if (lit == 0) return 1.7f;
+        var half = lit / 2;
+        var bin = 0;
+        for (var seen = 0; bin < bins - 1 && (seen += histogram[bin]) <= half; bin++) { }
+        var median = MathF.Pow(2, (bin + 0.5f) / 4 - 8);
+        // A star's dot spreads about 2.2 pixels' worth of its light over the 4 pixels of a square.
+        return (float)Math.Clamp(0.9 / (median * 2.2 / 4), 0.35, 1.7);
     }
 
     /// <summary>A soft white dot, 16 pixels across, that each star is stamped with.</summary>
@@ -246,6 +292,15 @@ static class GalaxyGpu
         }
     }
 
+    /// <summary>Forgets every layer and stamp, as if nothing had been drawn yet (the tests, between pictures).</summary>
+    internal static void Forget()
+    {
+        if (_surfaces is { } old) { old.Full.Dispose(); old.Small.Dispose(); old.Blurred.Dispose(); old.Sky.Dispose(); }
+        _whole?.Dispose();
+        (_surfaces, _stamped, _skyKey, _whole, _wholeAt, _costMs) = (null, null, null, null, null, double.MaxValue);
+        lock (BuildGate) (_ready, _spare, _wanted) = (null, null, null);
+    }
+
     static int _lost;
     static DateTime? _lostAt;
     // The last finished sky, copied back from the card once the view settles, for the moments the card goes away.
@@ -259,6 +314,7 @@ static class GalaxyGpu
         _lostAt = null;
         Available = false;
         _surfaces = null;   // made with the context that went away
+        (_whole, _wholeAt) = (null, null);
         MusicOrganiser.Core.AppLog.Info("Galaxy", "The graphics card went away for a moment: the processor draws the stars until it's back");
         Dispatcher.UIThread.Post(() =>
         {
@@ -278,14 +334,22 @@ static class GalaxyGpu
     /// <summary>Raised (on the UI thread) when the graphics card turns out not to be available, so the view repaints on the processor.</summary>
     public static event Action? Changed;
 
-    static void Draw(GRContext gr, SKCanvas target, Frame f)
+    /// <summary>
+    /// Draws one frame onto <paramref name="target"/>. With no graphics card (<paramref name="gr"/> null: the tests),
+    /// the same layers are made in memory, so the processor runs the very same steps.
+    /// </summary>
+    internal static void Draw(GRContext? gr, SKCanvas target, Frame f)
     {
         int w = f.Width, h = f.Height, sw = w / 4 + 1, sh = h / 4 + 1;
         if (_surfaces is not { } s || s.Gr != gr || s.W != w || s.H != h)
         {
             if (_surfaces is { } old) { old.Full.Dispose(); old.Small.Dispose(); old.Blurred.Dispose(); old.Sky.Dispose(); }
+            _whole?.Dispose();   // made by that graphics card, or for another size of view
+            _whole = null;
+            _wholeAt = null;
             SKSurface Make(int width, int height) =>
-                SKSurface.Create(gr, false, new SKImageInfo(width, height, SKColorType.RgbaF16, SKAlphaType.Premul))
+                (gr is null ? SKSurface.Create(new SKImageInfo(width, height, SKColorType.RgbaF16, SKAlphaType.Premul))
+                            : SKSurface.Create(gr, false, new SKImageInfo(width, height, SKColorType.RgbaF16, SKAlphaType.Premul)))
                 ?? throw new InvalidOperationException("The graphics card couldn't make a drawing layer.");
             _surfaces = s = (gr, w, h, Make(w, h), Make(sw, sh), Make(sw, sh), Make(w, h));
             _stamped = null;
@@ -317,6 +381,18 @@ static class GalaxyGpu
                 // Worked out on another thread while the last sky moves and scales with the camera; stamped once ready.
                 Want(f);
                 using var sky = s.Sky.Snapshot();
+                // Zooming out from close in, the last sky covers only the middle of the new view: round it, the whole
+                // galaxy as it last looked, so no stars go missing at the edges while the new view is worked out.
+                if (_whole is { } whole && _wholeAt is { } wa && wa.Xs == f.Xs && wa.Rgb == f.Rgb && wa.Weight == f.Weight)
+                {
+                    var ratio = (float)(f.Scale / _skyAt.Scale);
+                    var x = (float)(f.OffsetX - _skyAt.X * ratio);
+                    var y = (float)(f.OffsetY - _skyAt.Y * ratio);
+                    target.Save();
+                    target.ClipRect(new SKRect(x, y, x + s.W * ratio, y + s.H * ratio), SKClipOperation.Difference);
+                    Slide(target, whole, (wa.X, wa.Y, wa.Scale), f);
+                    target.Restore();
+                }
                 Slide(target, sky, _skyAt, f);
                 return;
             }
@@ -324,7 +400,7 @@ static class GalaxyGpu
 
         // The brightness pass, cheap: one go over the screen. Skipped when nothing about the picture changed.
         var at = _stamped!.Value;
-        var key = (at.Xs, at.X, at.Y, at.Scale, f.OffsetX, f.OffsetY, f.Core, f.Glow, f.Gain, w, h);
+        var key = (at.Xs, at.X, at.Y, at.Scale, f.OffsetX, f.OffsetY, f.Core, f.Glow, f.Brightness, w, h);
         if (!Equals(key, _skyKey))
         {
             Shade(s, f, (float)(f.OffsetX - at.X), (float)(f.OffsetY - at.Y));
@@ -335,6 +411,13 @@ static class GalaxyGpu
         {
             // The second frame showing the same sky: the view has settled, so it's copied back for a card drop-out.
             using var settled = s.Sky.Snapshot();
+            if (at.Whole)
+            {
+                // Every star is on it: kept to fill in round the edges while zooming out (see above).
+                _whole?.Dispose();
+                _whole = s.Sky.Snapshot();
+                _wholeAt = (at.Xs, at.Rgb, at.Weight, _skyAt.X, _skyAt.Y, _skyAt.Scale);
+            }
             using var bitmap = new SKBitmap(new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Premul));
             if (settled.ReadPixels(bitmap.Info, bitmap.GetPixels(), bitmap.RowBytes, 0, 0))
             {
@@ -359,7 +442,7 @@ static class GalaxyGpu
     }
 
     /// <summary>Stamps every star in the list onto the full-size layer and the quarter-size one, then blurs that into the glow.</summary>
-    static void StampAll((GRContext Gr, int W, int H, SKSurface Full, SKSurface Small, SKSurface Blurred, SKSurface Sky) s, Stamps st)
+    static void StampAll((GRContext? Gr, int W, int H, SKSurface Full, SKSurface Small, SKSurface Blurred, SKSurface Sky) s, Stamps st)
     {
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var f = st.For!;
@@ -384,7 +467,7 @@ static class GalaxyGpu
             blurred.Clear(SKColors.Transparent);
             blurred.DrawImage(smallImage, 0, 0, blur);
         }
-        _stamped = (f.Xs, f.Rgb, f.Weight, f.OffsetX, f.OffsetY, f.Scale, st.Whole);
+        _stamped = (f.Xs, f.Rgb, f.Weight, f.OffsetX, f.OffsetY, f.Scale, st.Whole, st.Gain);
         _skyKey = null;
         _costMs = st.BuildMs + timer.Elapsed.TotalMilliseconds;
         GalaxyTiming.Stamped(st.BuildMs, timer.Elapsed.TotalMilliseconds, st.Xforms.Length);
@@ -394,7 +477,7 @@ static class GalaxyGpu
     /// The brightness pass: stamps and glow, moved by (<paramref name="dx"/>, <paramref name="dy"/>) when a stamp of the
     /// whole galaxy is sliding, squeezed so a crowd stays vivid and keeps its colour.
     /// </summary>
-    static void Shade((GRContext Gr, int W, int H, SKSurface Full, SKSurface Small, SKSurface Blurred, SKSurface Sky) s, Frame f, float dx, float dy)
+    static void Shade((GRContext? Gr, int W, int H, SKSurface Full, SKSurface Small, SKSurface Blurred, SKSurface Sky) s, Frame f, float dx, float dy)
     {
         _effect ??= SKRuntimeEffect.CreateShader(ShaderCode, out var errors)
                     ?? throw new InvalidOperationException($"The galaxy's shader didn't build: {errors}");
@@ -407,7 +490,7 @@ static class GalaxyGpu
             ["core"] = f.Core / Stamp,
             // A quarter-size stamp covers a sixteenth of the pixels, so the glow is brought back up to match.
             ["glowK"] = f.Glow / Stamp * 0.9f,
-            ["gain"] = f.Gain,
+            ["gain"] = _stamped!.Value.Gain * f.Brightness,
             ["shift"] = new[] { dx, dy },
         };
         var children = new SKRuntimeEffectChildren(_effect) { ["stars"] = starsShader, ["glow"] = glowShader };
