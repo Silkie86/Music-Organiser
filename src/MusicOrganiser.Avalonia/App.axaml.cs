@@ -53,6 +53,8 @@ public partial class App : Application
             // once the window shows: the work before that (the window being built) isn't a freeze anyone sees.
             UiWatchdog? watchdog = null;
             window.Opened += (_, _) => watchdog ??= new UiWatchdog(main);
+            // The room left on the library's drive, checked every few minutes: a sign and a message when it's nearly full.
+            window.Opened += (_, _) => main.Settings.AppFiles.Start();
             // Indexes this version added: the first build over a big library takes a few seconds, so it waits for the window.
             window.Opened += (_, _) => _ = Task.Run(() =>
             {

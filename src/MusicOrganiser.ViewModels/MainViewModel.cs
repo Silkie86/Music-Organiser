@@ -582,8 +582,10 @@ public sealed partial class MainViewModel : ObservableObject
                 card = Activities.Start("Measuring plugin sizes", cancel: cts.Cancel);
                 var before = SpaceSignature(_db.PluginSpaces().Values);
                 var after = SpaceSignature(await Task.Run(() => meter.MeasurePlugins(ct: cts.Token), cts.Token));
-                // Only when a size changed: the page keeps its rows (and your place in them) otherwise.
+                // Only when a size changed: the page keeps its rows (and your place in them) otherwise. The spare copies
+                // are looked for by the same measure, so they're shown either way.
                 if (before != after) await Plugins.ReloadAsync();
+                else await Plugins.RefreshSparesAsync();
             }
             var progress = new Progress<(int Done, int Total)>(p =>
             {

@@ -100,19 +100,21 @@ public sealed partial class PluginsViewModel : ObservableObject
     /// <summary>What the page shows, read from the database (on any thread).</summary>
     sealed record Loaded(IReadOnlyList<PluginUsage> Items, HashSet<string> InstalledNames,
                          IReadOnlyDictionary<long, HashSet<string>> MissingBy, (int Files, int Plugins, int Failed) Scans, (int Read, int Left) Parameters,
-                         IReadOnlyDictionary<string, PluginSpaceInfo> Spaces, IReadOnlyList<SpareCopy> Spares, IReadOnlyList<MovedFolder> OldCopies,
-                         IReadOnlyList<MovedFolder> Moved, IReadOnlyList<MovedFolder> Lost, IReadOnlyList<MovedFolder> Replaced,
-                         IReadOnlyList<OldHome> OldHomes);
+                         IReadOnlyDictionary<string, PluginSpaceInfo> Spaces, IReadOnlyList<SpareCopy> Spares, bool SparesLookedFor,
+                         IReadOnlyList<MovedFolder> OldCopies, IReadOnlyList<MovedFolder> Moved, IReadOnlyList<MovedFolder> Lost,
+                         IReadOnlyList<MovedFolder> Replaced, IReadOnlyList<(MovedFolder Moved, string Around)> Doubled,
+                         IReadOnlyList<OldHome> OldHomes, IReadOnlyList<string> SharersStale);
 
     Loaded Load()
     {
-        var moved = _db.MovedFolders();
+        var spaces = _db.PluginSpaces();
+        var (moved, stale) = FolderMove.FindSharers(_db.MovedFolders(), spaces);
         // Only old copies and old places that can go: not while the copy on the other drive can't be reached, nor while
         // a link still points into an old place.
         return new(_db.PluginUsage(), _db.InstalledNames(), _db.MissingPluginsByProject(), _db.PluginScanCounts(), _db.ParameterCounts(),
-                   _db.PluginSpaces(), _db.SpareCopyList().Where(c => File.Exists(c.Path) || Directory.Exists(c.Path)).ToList(),
-                   moved.Where(FolderMove.OldCopyCanGo).ToList(), moved, FolderMove.Lost(moved), FolderMove.Replaced(moved),
-                   _db.OldHomes().Where(h => FolderMove.OldHomeCanGo(h, moved)).ToList());
+                   spaces, StillThere(_db.SpareCopyList()), _db.SpareCopiesLookedFor(),
+                   moved.Where(FolderMove.OldCopyCanGo).ToList(), moved, FolderMove.Lost(moved), FolderMove.Replaced(moved), FolderMove.Doubled(moved),
+                   _db.OldHomes().Where(h => FolderMove.OldHomeCanGo(h, moved)).ToList(), stale);
     }
 
     /// <summary>What the page last read, so changing how many cards to show doesn't read the database again.</summary>
@@ -133,9 +135,10 @@ public sealed partial class PluginsViewModel : ObservableObject
                   (neverUsed > 0 ? $", {neverUsed} installed that no project uses" : "");
         BuildNeeded(loaded);
         BuildCandidates();
-        BuildSpares(loaded.Spares);
+        BuildSpares(loaded.Spares, loaded.SparesLookedFor);
         BuildOldCopies(loaded.OldCopies, loaded.OldHomes);
-        BuildHomes(loaded.Moved, loaded.Lost, loaded.Replaced);
+        BuildHomes(loaded.Moved, loaded.Lost, loaded.Replaced, loaded.Doubled);
+        KeepSharers(loaded);
         Selected = selected is null ? null : Items.FirstOrDefault(p => p.Name == selected.Name && p.Own == selected.Own);
 
         if (!_main.PluginScanner.Available)

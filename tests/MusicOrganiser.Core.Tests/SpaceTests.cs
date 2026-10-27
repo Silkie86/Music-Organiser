@@ -1171,4 +1171,263 @@ public class SpaceTests : IDisposable
             Environment.SetEnvironmentVariable("XDG_DATA_HOME", home);
         }
     }
+
+    // ---- F12 notes of 27 Oct: moved folders inside moved folders, spare copies by format, the app's own files ----------
+
+    [Fact]
+    public void A_folder_inside_a_moved_one_isnt_moved_again_and_its_old_copy_stays_with_the_outer_one()
+    {
+        var reaktor = Path.GetDirectoryName(File("C/Native Instruments/Reaktor 6/factory.ens", 300))!;
+        var kontakt = Path.GetDirectoryName(File("C/Native Instruments/Kontakt/lib.nki", 200))!;
+        var ni = Path.GetDirectoryName(reaktor)!;
+        var home = Directory.CreateDirectory(Path.Combine(_root, "I", "Plugin Data")).FullName;
+        string DriveOf(string path) => Path.GetRelativePath(_root, path).Split(Path.DirectorySeparatorChar)[0];
+        var r6 = FolderMove.Move(reaktor, home, 300, driveOf: DriveOf);
+
+        // Native Instruments, the folder around it, moves after it: Reaktor 6's link goes as a link, and its old copy
+        // stays in Native Instruments' own old copy rather than going to I: too.
+        var outer = FolderMove.Move(ni, home, 500, driveOf: DriveOf, alreadyMoved: [r6]);
+        IReadOnlyList<MovedFolder> moved = [r6, outer];
+        Assert.True(FolderMove.IsLink(Path.Combine(outer.To, "Reaktor 6")));
+        Assert.False(Directory.Exists(Path.Combine(outer.To, "Reaktor 6" + FolderMove.OldSuffix)));
+        Assert.True(System.IO.File.Exists(Path.Combine(outer.OldCopy, "Reaktor 6" + FolderMove.OldSuffix, "factory.ens")));
+        Assert.False(r6.HasOldCopy);   // it goes when Native Instruments' old copy does
+        Assert.Equal(300, new FileInfo(Path.Combine(reaktor, "factory.ens")).Length);   // the plugin still finds it
+        Assert.Empty(FolderMove.Replaced(moved));
+        Assert.Empty(FolderMove.Doubled(moved));
+
+        // A folder inside a moved one is on the other drive already: moving it would free nothing here.
+        Directory.CreateDirectory(Path.Combine(_root, "J"));
+        Assert.Equal("It's inside Native Instruments, which is on another drive already, so moving it frees nothing here.",
+                     FolderMove.Problem(kontakt, Path.Combine(_root, "J"), 200, driveOf: DriveOf, moved: moved));
+    }
+
+    /// <summary>
+    /// Before links inside a moved folder stayed links (F12 note, 27 Oct): Reaktor 6 moved, then Native Instruments around
+    /// it, and that move copied what Reaktor 6's link pointed at. So I: has it twice, and the plugin uses the second copy,
+    /// which looks like a real folder again. Returns Reaktor 6's folder, its move and the one around it.
+    /// </summary>
+    (string Reaktor, MovedFolder Inner, MovedFolder Outer) MovedTwice()
+    {
+        var reaktor = Path.GetDirectoryName(File("C/Native Instruments/Reaktor 6/factory.ens", 300))!;
+        var ni = Path.GetDirectoryName(reaktor)!;
+        var home = Directory.CreateDirectory(Path.Combine(_root, "I", "Plugin Data")).FullName;
+        string DriveOf(string path) => Path.GetRelativePath(_root, path).Split(Path.DirectorySeparatorChar)[0];
+        var inner = FolderMove.Move(reaktor, home, 300, driveOf: DriveOf) with { Key = "reaktor6" };
+        // The old move: everything copied as it read, the links followed, the old copy too.
+        var copy = Path.Combine(home, "Native Instruments");
+        Copy(Path.Combine(inner.To, "factory.ens"), "I/Plugin Data/Native Instruments/Reaktor 6/factory.ens", DateTime.Now.AddDays(-1));
+        Copy(Path.Combine(inner.OldCopy, "factory.ens"), "I/Plugin Data/Native Instruments/Reaktor 6 (old copy)/factory.ens", DateTime.Now.AddDays(-1));
+        Directory.Move(ni, ni + FolderMove.OldSuffix);
+        Directory.CreateSymbolicLink(ni, copy);
+        return (reaktor, inner, new MovedFolder(ni, copy, ni + FolderMove.OldSuffix, 600, DateTime.Now) { Key = "kontakt" });
+    }
+
+    [Fact]
+    public void A_folder_on_the_other_drive_twice_is_tidied_up_to_one_copy()
+    {
+        var (reaktor, r6, outer) = MovedTwice();
+        IReadOnlyList<MovedFolder> moved = [r6, outer];
+        Assert.Empty(FolderMove.Replaced(moved));   // no update did this
+        Assert.Equal([(r6, outer.From)], FolderMove.Doubled(moved));
+
+        // Since then the plugin saved a preset: it's in the second copy.
+        System.IO.File.WriteAllBytes(Path.Combine(reaktor, "mine.ens"), new byte[42]);
+        var aside = FolderMove.LinkAgain(r6, 342, second: true);
+        Assert.True(FolderMove.IsLink(reaktor));
+        Assert.Empty(FolderMove.Doubled(moved));
+        Assert.Equal(42, new FileInfo(Path.Combine(r6.To, "mine.ens")).Length);   // kept in the copy that stays
+        Assert.Equal(300, new FileInfo(Path.Combine(reaktor, "factory.ens")).Length);
+        Assert.Equal(reaktor + FolderMove.SecondSuffix, aside.Path);
+        Assert.Equal("a second copy", aside.Note);
+        // It's really on I:, inside Native Instruments' copy: binned there, not copied back to C: to be binned.
+        var real = Path.Combine(outer.To, "Reaktor 6" + FolderMove.SecondSuffix);
+        Assert.Equal(real, FolderMove.RealPlace(aside.Path, moved));
+        Assert.True(Directory.Exists(real));
+        Assert.Equal(r6.To, FolderMove.RealPlace(r6.To, moved));   // a path in no moved folder is where it looks
+    }
+
+    [Fact]
+    public async Task The_plugins_page_tidies_up_a_folder_on_the_other_drive_twice()
+    {
+        var (reaktor, r6, outer) = MovedTwice();
+        using var page = new Page(_root);
+        page.Db.SetList(Scanner.PluginFoldersKey, [Directory.CreateDirectory(Path.Combine(_root, "Plugins")).FullName]);
+        page.Db.SaveMovedFolders([r6, outer]);
+        var plugins = page.Main.Plugins;
+        plugins.Reload();
+        Assert.False(plugins.HasReplaced);   // it was "a real folder here again" (F12 note, 27 Oct)
+        Assert.True(plugins.HasDoubled);
+        Assert.Equal("Reaktor 6 is on the other drive twice: it had moved already when Native Instruments, the folder around it, moved too. " +
+                     "Nothing's broken. Tidy up… keeps one copy.", plugins.DoubledText);
+        plugins.DeleteOldCopy(r6);   // not before it's tidied up
+        Assert.Null(plugins.Card);
+        Assert.Contains(page.Main.Activities.Items, a => a.Detail.Contains("Tidy up"));
+
+        plugins.TidyUpDoubledCommand.Execute(null);
+        Assert.Equal("Tidy up Reaktor 6?", plugins.Card!.Title);
+        await plugins.Card.RunCommand.ExecuteAsync(null);
+        Assert.Null(plugins.Card);
+        Assert.False(plugins.HasDoubled);
+        Assert.True(FolderMove.IsLink(reaktor));
+        Assert.Contains(page.Main.Activities.Items, a => a.Title == "Tidied it up");
+        // The second copy and Reaktor 6's old copy are on the old copies card, by where they really are (I:).
+        var second = Path.Combine(outer.To, "Reaktor 6" + FolderMove.SecondSuffix);
+        Assert.Equal([second], page.Db.OldHomes().Select(h => h.Path));
+        plugins.ReviewOldCopiesCommand.Execute(null);
+        Assert.Equal([outer.OldCopy, Path.Combine(outer.To, "Reaktor 6" + FolderMove.OldSuffix), second],
+                     plugins.Card!.Items.Select(i => i.Folder.Path).Order());
+    }
+
+    [Fact]
+    public async Task A_moved_folder_shows_on_every_plugin_that_shared_it_and_their_sizes_are_measured_again()
+    {
+        var toontrack = Path.GetDirectoryName(Path.GetDirectoryName(File("C/Toontrack/Core/piano.dat", 300)))!;
+        Directory.CreateDirectory(Path.Combine(_root, "I"));
+        string DriveOf(string path) => Path.GetRelativePath(_root, path).Split(Path.DirectorySeparatorChar)[0];
+        string sd3 = LibraryDb.NameKey("Superior Drummer 3"), ezkeys = LibraryDb.NameKey("EZkeys 2");
+        // Moved from Superior Drummer 3 before the plugins sharing it were kept with the move.
+        var moved = FolderMove.Move(toontrack, Path.Combine(_root, "I"), 300, driveOf: DriveOf) with { Key = sd3 };
+        PluginSpaceInfo Shared(string name, string with) =>
+            Space(name, 300, toontrack) is var s ? s with { Folders = [s.Folders[0], s.Folders[1] with { SharedWith = [with] }] } : s;
+        // Their sizes from before the move: EZkeys 2's still lists Toontrack on C:.
+        var spaces = new[] { Shared("EZkeys 2", sd3) }.ToDictionary(s => s.Key);
+        var (found, stale) = FolderMove.FindSharers([moved], spaces);
+        Assert.Equal([ezkeys], found.Single().SharedWith);
+        Assert.Equal([ezkeys], stale);
+        Assert.Empty(FolderMove.FindSharers(found, spaces).Stale);   // looked at once
+        Assert.True(found.Single().Belongs(ezkeys) && found.Single().Belongs(sd3) && !found.Single().Belongs(""));
+
+        using var page = new Page(_root);
+        page.Db.SetList(Scanner.PluginFoldersKey, [Directory.CreateDirectory(Path.Combine(_root, "Plugins")).FullName]);
+        page.Db.ReplaceInstalledPlugins(["Superior Drummer 3", "EZkeys 2"]);
+        page.Db.SavePluginSpaces([Shared("Superior Drummer 3", ezkeys), Shared("EZkeys 2", sd3)], all: true);
+        page.Db.SaveMovedFolders([moved]);
+        var plugins = page.Main.Plugins;
+        plugins.Reload();
+        await plugins.SharersMeasured;
+        Assert.Equal([ezkeys], page.Db.MovedFolders().Single().SharedWith);
+        plugins.Selected = plugins.Items.Single(p => p.Name == "EZkeys 2");
+        Assert.True(plugins.HasMoved);   // its Space tab shows Toontrack moved, not on C:
+        Assert.Equal(moved.To, plugins.MovedFolders.Single().Where);
+    }
+
+    [Fact]
+    public async Task Spare_copies_say_when_they_havent_been_looked_for_and_go_a_format_at_a_time()
+    {
+        using var page = new Page(_root);
+        var db = page.Db;
+        db.SetList(Scanner.PluginFoldersKey, [Path.Combine(_root, "Plugins")]);
+        var serum2 = File("Plugins/Serum.dll", 10);
+        File("Plugins/Serum.vst3", 10);
+        Song(db, "song", DateTime.Now.AddDays(-3), "Serum");   // its VST3
+        // Plugins measured today, by an app from before spare copies were looked for.
+        db.SavePluginSpaces([Space("Serum", 10)], all: true);
+        var plugins = page.Main.Plugins;
+        plugins.Reload();
+        // Nothing said there were any to look for (F12 note, 27 Oct: "its not obvious what you have to do").
+        Assert.True(plugins.SparesUnknown);
+        Assert.False(plugins.HasSpares);
+        var meter = new SpaceMeter(db);
+        Assert.True(meter.PluginsStale());   // so the measure after the next scan looks for them too
+        await plugins.LookForSparesCommand.ExecuteAsync(null);
+        Assert.False(plugins.SparesUnknown);
+        Assert.False(meter.PluginsStale());
+        Assert.Equal("1 spare plugin copy", plugins.SpareTitle);
+        Assert.Equal(("VST2", serum2), (plugins.SpareFormats.Single().Format, db.SpareCopyList().Single().Path));
+        Assert.Contains(page.Main.Activities.Items, a => a.Title == "Found 1 spare plugin copy");
+
+        // Several formats: each its own chip, biggest first, and its own tick on the card.
+        db.SaveSpareCopies([
+            new SpareCopy("Serum", "VST2", serum2, 10, ""), new SpareCopy("Diva", "VST2", File("Plugins/Diva.dll", 20), 20, ""),
+            new SpareCopy("Serum", "AAX", File("Plugins/Serum.aaxplugin", 50), 50, ""), new SpareCopy("Vital", "CLAP", File("Plugins/Vital.clap", 5), 5, ""),
+        ]);
+        await plugins.RefreshSparesAsync();
+        Assert.Equal(["AAX · 1 · 50 bytes", "VST2 · 2 · 30 bytes", "CLAP · 1 · 5 bytes"], plugins.SpareFormats.Select(f => f.Text));
+        plugins.SpareFormats[1].ReviewCommand.Execute(null);
+        var card = plugins.Card!;
+        Assert.Equal("Remove the spare VST2 copies?", card.Title);
+        Assert.Equal(["Diva · VST2", "Serum · VST2", "Serum · AAX", "Vital · CLAP"], card.Items.Select(i => i.Name));   // the format picked first
+        Assert.Equal(["Diva · VST2", "Serum · VST2"], card.Items.Where(i => i.IsTicked).Select(i => i.Name));
+        Assert.Equal([("VST2", (bool?)true), ("AAX", false), ("CLAP", false)], card.Groups.Select(g => (g.Name, g.IsTicked)));
+        Assert.Equal("Delete 30 bytes", card.ConfirmText);
+
+        card.Groups[1].IsTicked = true;   // every AAX copy
+        Assert.Equal("Delete 80 bytes", card.ConfirmText);
+        card.Items.Single(i => i.Name == "Diva · VST2").IsTicked = false;
+        Assert.Null(card.Groups[0].IsTicked);   // some of the VST2 copies
+        Assert.Equal("Delete 60 bytes", card.ConfirmText);
+        card.Groups[0].IsTicked = false;
+        Assert.Equal((bool?)false, card.Groups[0].IsTicked);
+        Assert.Equal("Delete 50 bytes", card.ConfirmText);
+        plugins.CloseCard();
+
+        plugins.ReviewSparesCommand.Execute(null);   // Review…: every one
+        Assert.All(plugins.Card!.Groups, g => Assert.Equal(true, g.IsTicked));
+        Assert.Equal("Delete 85 bytes", plugins.Card.ConfirmText);
+    }
+
+    [Fact]
+    public async Task The_apps_own_files_are_measured_and_a_nearly_full_drive_is_said_once_until_theres_room_again()
+    {
+        var data = Path.Combine(_root, "data");
+        File("data/library.db", 100);
+        File("data/library.db-wal", 20);
+        File("data/sounds.db", 50);
+        File("data/midi.db", 30);
+        File("data/models/clap/model.onnx", 400);
+        File("data/logs/run.log", 5);
+        File("data/notes/note.txt", 7);
+        File("data/Bitwig template/template.bwproject", 9);
+        File("data/playground/idea.json", 11);
+        Directory.CreateSymbolicLink(Path.Combine(data, "linked"), Path.GetDirectoryName(File("Elsewhere/big.wav", 5000))!);
+        var parts = AppFiles.Measure(data, AppFiles.Databases(Path.Combine(data, "library.db"), Path.Combine(data, "sounds.db"), Path.Combine(data, "midi.db")));
+        Assert.Equal(["Search models 400", "Your library 120", "Sound Lab 50", "MIDI parts 30", "Playground ideas 11", "Everything else 9",
+                      "Notes for Claude 7", "Logs 5"], parts.Select(p => $"{p.Name} {p.Bytes}"));
+        Assert.True(AppFiles.IsLow(5L << 30, 1L << 20));
+        Assert.False(AppFiles.IsLow(50L << 30, 1L << 20));
+        Assert.True(AppFiles.IsLow(15L << 30, 20L << 30));   // less room than the app's files take: a big scan could fill it
+        Assert.False(AppFiles.IsLow(-1, 0));                   // a drive that couldn't be asked
+
+        using var page = new Page(_root);
+        var files = page.Main.Settings.AppFiles;
+        var was = AppFilesViewModel.DriveSpace;
+        try
+        {
+            AppFilesViewModel.DriveSpace = _ => ("C:", 300L << 30, 2000L << 30);
+            await files.MeasureAsync();
+            Assert.Contains(files.Parts, p => p.Name == "Your library" && p.Colour == "#5B9CF2");   // the page's own library
+            Assert.Contains(files.Parts, p => p.Name == "Search models" && p.Bytes == 400);
+            Assert.StartsWith("C: has 300 GB free of", files.DriveText);
+            Assert.False(files.IsLow);
+
+            AppFilesViewModel.DriveSpace = _ => ("C:", 3L << 30, 2000L << 30);
+            await files.CheckAsync();
+            await files.CheckAsync();   // checked every few minutes, said once
+            Assert.True(files.IsLow);
+            Assert.Equal("C:", files.RailText);
+            Assert.StartsWith("C: is nearly full: 3 GB left.", files.LowText);
+            Assert.Single(page.Main.Activities.Items, a => a.Title == "C: is nearly full");
+
+            // The left bar's sign opens Settings › General; Free up space… opens Plugins.
+            files.ShowCommand.Execute(null);
+            Assert.Same(page.Main.Settings, page.Main.SelectedNav.Page);
+            Assert.Equal("General", page.Main.Settings.Tab);
+            files.FreeUpSpaceCommand.Execute(null);
+            Assert.Same(page.Main.Plugins, page.Main.SelectedNav.Page);
+
+            // Room again, then almost full: said again.
+            AppFilesViewModel.DriveSpace = _ => ("C:", 300L << 30, 2000L << 30);
+            await files.CheckAsync();
+            Assert.False(files.IsLow);
+            AppFilesViewModel.DriveSpace = _ => ("C:", 1L << 30, 2000L << 30);
+            await files.CheckAsync();
+            Assert.StartsWith("C: is almost full", files.LowText);
+            Assert.Equal(2, page.Main.Activities.Items.Count(a => a.Title == "C: is nearly full"));
+        }
+        finally
+        {
+            AppFilesViewModel.DriveSpace = was;
+        }
+    }
 }

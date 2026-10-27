@@ -198,14 +198,46 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- The library and the app's other files: how big each part is, and the room left on their drive (F12 note, 27 Oct). -->
                         <Border Classes="card settingsCard">
-                            <StackPanel>
+                            <StackPanel Spacing="8">
                                 <TextBlock Text="Your library" Classes="sectionHeader" />
-                                <TextBlock Classes="muted" FontSize="12.5">
+                                <TextBlock Classes="muted" FontSize="12.5" TextWrapping="Wrap">
                                     <Run Text="Your tags, ratings and notes are stored on this computer in" />
                                     <Run Text="{Binding LibraryLocation, Mode=OneWay}" Foreground="{StaticResource TextBrush}" />
                                     <Run Text=". Nothing is uploaded; online search only opens your browser when you ask it to." />
                                 </TextBlock>
+                                <StackPanel Spacing="8" DataContext="{Binding AppFiles}" x:DataType="vm:AppFilesViewModel">
+                                    <TextBlock Text="Measuring the app's files…" Classes="muted" FontSize="12.5" IsVisible="{Binding !HasParts}" />
+                                    <StackPanel Spacing="8" IsVisible="{Binding HasParts}">
+                                        <views:ShareBar Parts="{Binding Parts}" />
+                                        <ItemsControl ItemsSource="{Binding Parts}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:SpacePart">
+                                                    <DockPanel Margin="0,1">
+                                                        <TextBlock DockPanel.Dock="Right" Text="{Binding SizeText}" FontFamily="{DynamicResource NumberFont}" FontSize="12"
+                                                                   Foreground="{StaticResource MutedBrush}" Margin="10,0,0,0" />
+                                                        <Border DockPanel.Dock="Left" Width="9" Height="9" CornerRadius="2" Margin="0,0,8,0" VerticalAlignment="Center"
+                                                                Background="{Binding Colour, Converter={StaticResource HexBrush}}" />
+                                                        <TextBlock FontSize="12.5" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding What}">
+                                                            <Run Text="{Binding Name}" /><Run Text="  " /><Run Text="{Binding What}" Foreground="{StaticResource MutedBrush}" FontSize="12" />
+                                                        </TextBlock>
+                                                    </DockPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <TextBlock Classes="muted" FontSize="12.5" TextWrapping="Wrap">
+                                            <Run Text="{Binding TotalText}" Foreground="{StaticResource TextBrush}" FontWeight="SemiBold" /><Run Text=" · " /><Run Text="{Binding DriveText}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding LowText}" Foreground="{StaticResource WarningBrush}" FontSize="12.5" TextWrapping="Wrap" IsVisible="{Binding IsLow}" />
+                                    <WrapPanel Classes="buttons">
+                                        <Button Content="Free up space…" Classes.accent="{Binding IsLow}" Command="{Binding FreeUpSpaceCommand}"
+                                                ToolTip.Tip="The Plugins page: spare plugin copies, plugins no project uses and old copies, all to the Recycle Bin" />
+                                        <Button Content="Open folder" Command="{Binding OpenFolderCommand}" ToolTip.Tip="{Binding Folder}" />
+                                        <Button Content="Measure again" Command="{Binding MeasureAgainCommand}" ToolTip.Tip="Measure the app's files again now" />
+                                    </WrapPanel>
+                                </StackPanel>
                             </StackPanel>
                         </Border>
                     </StackPanel>

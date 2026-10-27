@@ -37,12 +37,14 @@ public sealed partial class PluginsViewModel
     void ReviewOldCopies()
     {
         if (_oldCopies.Count + _oldHomes.Count == 0) return;
+        var all = _db.MovedFolders();
+        string Real(MovedFolder m) => FolderMove.RealPlace(m.OldCopy, all);
         var card = new SpaceCard(this)
         {
             Title = "Delete the old copies?",
             Intro = "Each folder now lives on another drive, and the plugins use that copy. Untick any whose plugin you haven't opened yet. " +
                     "They go to the Recycle Bin: empty the bin to get the room back.",
-            Items = _oldCopies.Select(m => new CleanupItem(new SpaceFolder(m.OldCopy, m.Kind, m.Bytes, []), "", ticked: true,
+            Items = _oldCopies.Select(m => new CleanupItem(new SpaceFolder(Real(m), m.Kind, m.Bytes, []), "", ticked: true,
                                                            label: Path.GetFileName(m.OldCopy), detail: $"Now on {m.To}"))
                               .Concat(_oldHomes.Select(h => new CleanupItem(new SpaceFolder(h.Path, SpaceKind.Sounds, h.Bytes, []), "", ticked: true,
                                                                             label: $"{Path.GetFileName(h.Path)} ({h.Note})", detail: h.Path))).ToList(),
@@ -52,10 +54,10 @@ public sealed partial class PluginsViewModel
         {
             // Checked again: a drive unplugged since the card opened leaves an old copy the only one the plugin can reach.
             card.Busy = true;
-            var keep = await Task.Run(() =>
+            var keep = await LookAgain(() =>
             {
                 var moved = _db.MovedFolders();
-                return old.Where(m => !FolderMove.OldCopyCanGo(m)).Select(m => m.OldCopy)
+                return old.Where(m => !FolderMove.OldCopyCanGo(m)).Select(Real)
                           .Concat(homes.Where(h => !FolderMove.OldHomeCanGo(h, moved)).Select(h => h.Path))
                           .ToHashSet(StringComparer.OrdinalIgnoreCase);
             });
@@ -72,10 +74,34 @@ public sealed partial class PluginsViewModel
         Card = card;
     }
 
+    /// <summary>The picked plugin's moved folders: the ones moved from it, and the ones it shared with the plugin they moved from.</summary>
     void LoadMoved(string key) =>
-        MovedFolders = key.Length == 0 ? [] : _db.MovedFolders().Where(m => m.Key == key).Select(m => new MovedFolderItem(m, this)).ToList();
+        MovedFolders = key.Length == 0 ? [] : _db.MovedFolders().Where(m => m.Belongs(key)).Select(m => new MovedFolderItem(m, this)).ToList();
 
     void SaveMoved(Func<IEnumerable<MovedFolder>, IEnumerable<MovedFolder>> change) => _db.SaveMovedFolders(change(_db.MovedFolders()).ToList());
+
+    // The plugins measured again this session because a folder they shared moved before that was kept (see KeepSharers).
+    readonly HashSet<string> _sharersMeasured = [];
+
+    /// <summary>
+    /// For folders moved before the plugins sharing them were kept with the move: keeps the ones found from their sizes
+    /// (EZkeys 2's still listed Toontrack, moved from another Toontrack plugin), and measures those plugins again so they
+    /// stop showing it on this drive (F12 note, 27 Oct). Each plugin only once a session, so a page shown again doesn't
+    /// measure it again.
+    /// </summary>
+    void KeepSharers(Loaded loaded)
+    {
+        if (loaded.SharersStale.Where(_sharersMeasured.Add).ToArray() is not { Length: > 0 } stale) return;
+        var found = loaded.Moved.Where(m => m.SharedWith.Count > 0).ToDictionary(m => m.From, m => m.SharedWith, StringComparer.OrdinalIgnoreCase);
+        SaveMoved(all => all.Select(m => m.SharedWith.Count == 0 && found.TryGetValue(m.From, out var with) ? m with { SharedWith = with } : m));
+        SharersMeasured = RemeasureAsync(stale);
+    }
+
+    /// <summary>The measure <see cref="KeepSharers"/> started last, for tests to wait for.</summary>
+    internal Task SharersMeasured { get; private set; } = Task.CompletedTask;
+
+    /// <summary>The plugins whose sizes a moved folder changes: the one it was moved from, and those sharing it.</summary>
+    static string[] Owners(MovedFolder m) => [.. new[] { m.Key }.Concat(m.SharedWith).Where(k => k.Length > 0).Distinct()];
 
     /// <summary>Move…: pick a folder on another drive, then a card says what happens before anything does.</summary>
     internal async Task MoveFolderAsync(SpaceFolder folder)
@@ -96,7 +122,7 @@ public sealed partial class PluginsViewModel
             folder = folder with { Bytes = bytes };
             (admin, problem) = await Task.Run(() =>
             {
-                if (FolderMove.Problem(folder.Path, destination, folder.Bytes, ct: stop.Token) is { Length: > 0 } why) return (false, why);
+                if (FolderMove.Problem(folder.Path, destination, folder.Bytes, ct: stop.Token, moved: _db.MovedFolders()) is { Length: > 0 } why) return (false, why);
                 stop.Token.ThrowIfCancellationRequested();   // stopped while it looked: the folder isn't renamed to check it can be
                 return FolderMove.CheckSwap(folder.Path);
             }, stop.Token);
@@ -127,6 +153,7 @@ public sealed partial class PluginsViewModel
         Card = card;
     }
 
+    /// <param name="key">The plugin it's moved from; the plugins it's shared with (<see cref="SpaceFolder.SharedWith"/>) are kept with the move too.</param>
     async Task RunMoveAsync(string key, string plugin, SpaceFolder folder, string destination)
     {
         Card = null;
@@ -138,9 +165,10 @@ public sealed partial class PluginsViewModel
                                                                            $"Copied {DiskSpace.Text(done)} of {DiskSpace.Text(folder.Bytes)}"));
         try
         {
-            var moved = await Copying(progress, () => FolderMove.Move(folder.Path, destination, folder.Bytes, progress, stop.Token));
+            var before = _db.MovedFolders();
+            var moved = await Copying(progress, () => FolderMove.Move(folder.Path, destination, folder.Bytes, progress, stop.Token, alreadyMoved: before));
             SaveMoved(all => all.Where(m => !m.From.Equals(moved.From, StringComparison.OrdinalIgnoreCase))
-                                .Append(moved with { Key = key, Kind = folder.Kind }));
+                                .Append(moved with { Key = key, Kind = folder.Kind, SharedWith = folder.SharedWith.Where(k => k != key).ToList() }));
             activity.Finish($"Moved {name} to {Path.GetPathRoot(moved.To)}",
                             $"Open {plugin} in your DAW. Once it's fine, Delete old copy frees {DiskSpace.Text(folder.Bytes)} here.",
                             "Show", () => Shell.Reveal(moved.To));
@@ -155,7 +183,8 @@ public sealed partial class PluginsViewModel
             activity.Fail($"Couldn't move {name}", e.Message);
             return;
         }
-        await RemeasureAsync(key);
+        // Every plugin it was the folder of: the others sharing it showed it on this drive until the weekly measure (F12 note, 27 Oct).
+        await RemeasureAsync([key, .. folder.SharedWith.Where(k => k != key)]);
     }
 
     /// <summary>Runs a copy in the background; once it ends, a report still on its way isn't shown over the card that follows.</summary>
@@ -169,27 +198,33 @@ public sealed partial class PluginsViewModel
     internal void DeleteOldCopy(MovedFolder moved)
     {
         if (!moved.HasOldCopy) return;
+        var all = _db.MovedFolders();
         if (!FolderMove.OldCopyCanGo(moved))
         {
+            bool Is(MovedFolder m) => m.From.Equals(moved.From, StringComparison.OrdinalIgnoreCase);
             _main.Activities.Failed($"Keeping the old copy of {Path.GetFileName(moved.From)}",
-                                    FolderMove.Replaced([moved]).Count > 0
+                                    FolderMove.Doubled(all).Any(d => Is(d.Moved))
+                                        ? "It's on the other drive twice. Use Tidy up… on the Plugins page first."
+                                    : FolderMove.Replaced([moved]).Count > 0
                                         ? "An update put a real folder back where the link was. Use Link again… on the Plugins page first."
                                         : $"The plugin can't reach the copy in {moved.To} right now, so this is the only copy it can use. " +
                                           "Plug the drive back in, or use Find it… on Settings › Plugins.");
             return;
         }
+        // Inside a folder moved later (an old move's), it's really on the other drive: binned there, not copied back here.
+        var real = FolderMove.RealPlace(moved.OldCopy, all);
         var card = new SpaceCard(this)
         {
             Title = $"Delete the old copy of {Path.GetFileName(moved.From)}?",
             Intro = $"The plugin now uses the copy on {Path.GetPathRoot(moved.To)}. Only delete this once it has opened fine. " +
                     "It goes to the Recycle Bin: empty the bin to get the room back.",
-            Items = [new CleanupItem(new SpaceFolder(moved.OldCopy, moved.Kind, moved.Bytes, []), "", ticked: true,
-                                     label: Path.GetFileName(moved.OldCopy), detail: moved.OldCopy)],
+            Items = [new CleanupItem(new SpaceFolder(real, moved.Kind, moved.Bytes, []), "", ticked: true,
+                                     label: Path.GetFileName(moved.OldCopy), detail: real)],
         };
         card.Confirm = async () =>
         {
             // Checked again: the drive may have gone since the card opened.
-            var canGo = await Task.Run(() => FolderMove.OldCopyCanGo(moved));
+            var canGo = await LookAgain(() => FolderMove.OldCopyCanGo(moved));
             if (Card != card) return;   // Keep was pressed while it looked
             if (!canGo)
             {
@@ -198,7 +233,7 @@ public sealed partial class PluginsViewModel
                 return;
             }
             await DeleteAsync(card, "");
-            if (!Directory.Exists(moved.OldCopy)) LoadMoved(moved.Key);
+            if (!Directory.Exists(moved.OldCopy)) LoadSpace();
         };
         card.Refresh();
         Card = card;
@@ -251,7 +286,7 @@ public sealed partial class PluginsViewModel
         var left = removeCopy ? await Task.Run(() => RecycleBin.Send(moved.To)) : "";
         activity.Finish($"{name} is back where it was",
                         left.Length > 0 ? $"The copy on {Path.GetPathRoot(moved.To)} stayed: {left}" : removeCopy ? $"The copy on {Path.GetPathRoot(moved.To)} is in its Recycle Bin." : "");
-        await RemeasureAsync(moved.Key);
+        await RemeasureAsync(Owners(moved));
     }
 }
 
@@ -269,9 +304,27 @@ public sealed partial class PluginsViewModel
     [ObservableProperty] bool _hasReplaced;
     [ObservableProperty] string _replacedText = "";
     IReadOnlyList<MovedFolder> _replaced = [];
+    /// <summary>
+    /// Moved folders that were inside a folder moved after them, so the other drive has two copies of each (F12 note, 27
+    /// Oct: Reaktor 6 and Reaktor5 came up as not linked once Native Instruments moved). Nothing is broken; Tidy up keeps one.
+    /// </summary>
+    [ObservableProperty] bool _hasDoubled;
+    [ObservableProperty] string _doubledText = "";
+    IReadOnlyList<MovedFolder> _doubled = [];
 
-    void BuildHomes(IReadOnlyList<MovedFolder> moved, IReadOnlyList<MovedFolder> lost, IReadOnlyList<MovedFolder> replaced)
+    void BuildHomes(IReadOnlyList<MovedFolder> moved, IReadOnlyList<MovedFolder> lost, IReadOnlyList<MovedFolder> replaced,
+                    IReadOnlyList<(MovedFolder Moved, string Around)> doubled)
     {
+        _doubled = doubled.Select(d => d.Moved).ToList();
+        HasDoubled = doubled.Count > 0;
+        DoubledText = string.Join(" ", doubled.GroupBy(d => d.Around, StringComparer.OrdinalIgnoreCase).Select(g =>
+        {
+            var names = g.Select(d => Path.GetFileName(d.Moved.From)).ToList();
+            var one = names.Count == 1;
+            var those = one ? names[0] : $"{string.Join(", ", names.SkipLast(1))} and {names[^1]}";
+            return $"{those} {(one ? "is" : "are")} on the other drive twice: {(one ? "it" : "they")} had moved already when " +
+                   $"{Path.GetFileName(g.Key)}, the folder around {(one ? "it" : "them")}, moved too.";
+        })) + (doubled.Count == 1 ? " Nothing's broken. Tidy up… keeps one copy." : " Nothing's broken. Tidy up… keeps one copy of each.");
         _replaced = replaced;
         HasReplaced = replaced.Count > 0;
         var names = string.Join(", ", replaced.Select(m => Path.GetFileName(m.From)));
@@ -291,8 +344,8 @@ public sealed partial class PluginsViewModel
     public async Task RefreshHomesAsync()
     {
         var moved = _db.MovedFolders();
-        var (lost, replaced) = await Task.Run(() => (FolderMove.Lost(moved), FolderMove.Replaced(moved)));
-        BuildHomes(moved, lost, replaced);
+        var (lost, replaced, doubled) = await Task.Run(() => (FolderMove.Lost(moved), FolderMove.Replaced(moved), FolderMove.Doubled(moved)));
+        BuildHomes(moved, lost, replaced, doubled);
     }
 
     /// <summary>The warning's Find it…: the first place with folders that can't be found.</summary>
@@ -313,15 +366,38 @@ public sealed partial class PluginsViewModel
                     "Nothing is deleted: the set-aside folders go on the old copies card, to delete once the plugins open fine.",
         };
         card.Fix("Link again");
-        card.Confirm = () => RunLinkAgainAsync(replaced);
+        card.Confirm = () => RunLinkAgainAsync(replaced, second: false);
         Card = card;
     }
 
-    async Task RunLinkAgainAsync(IReadOnlyList<MovedFolder> replaced)
+    /// <summary>
+    /// Tidy up: a card first, then each folder that's on the other drive twice keeps the copy it moved to first. What's new
+    /// in the copy the plugin uses now joins it, and that copy becomes a link to it again (see <see cref="FolderMove.Doubled"/>).
+    /// </summary>
+    [RelayCommand]
+    void TidyUpDoubled()
+    {
+        if (_doubled.Count == 0) return;
+        var doubled = _doubled;
+        var names = doubled.Select(m => Path.GetFileName(m.From)).ToList();
+        var card = new SpaceCard(this)
+        {
+            Title = names.Count == 1 ? $"Tidy up {names[0]}?" : names.Count == 2 ? $"Tidy up {names[0]} and {names[1]}?" : $"Tidy up {names.Count} folders?",
+            Intro = "The plugins use the second copy now, inside the folder that moved later. Anything new or changed in it is copied to the first " +
+                    $"copy, then the second becomes \"…{FolderMove.SecondSuffix}\" and a link to the first takes its place. Close your DAW first. " +
+                    "Nothing is deleted: the second copies go on the old copies card, to delete once the plugins open fine.",
+        };
+        card.Fix("Tidy up");
+        card.Confirm = () => RunLinkAgainAsync(doubled, second: true);
+        Card = card;
+    }
+
+    /// <param name="second">Tidying up second copies (<see cref="TidyUpDoubled"/>) rather than folders an update made.</param>
+    async Task RunLinkAgainAsync(IReadOnlyList<MovedFolder> replaced, bool second)
     {
         Card = null;
         using var stop = new CancellationTokenSource();
-        var activity = _main.Activities.Start("Linking the folders again", "", cancel: stop.Cancel);
+        var activity = _main.Activities.Start(second ? "Tidying up the second copies" : "Linking the folders again", "", cancel: stop.Cancel);
         var problems = new List<string>();
         foreach (var m in replaced)
         {
@@ -330,12 +406,16 @@ public sealed partial class PluginsViewModel
             {
                 var bytes = (await Task.Run(() => DiskSpace.Measure(m.From, stop.Token), stop.Token)).Bytes;
                 var progress = new ThrottledProgress<long>(done => activity.Report(100.0 * done / Math.Max(1, bytes), $"{name}: copied {DiskSpace.Text(done)} of what's new"));
-                var aside = await Copying(progress, () => FolderMove.LinkAgain(m, bytes, progress, stop.Token));
+                var aside = await Copying(progress, () => FolderMove.LinkAgain(m, bytes, progress, stop.Token, second));
+                // A second copy is inside the folder that moved later, so it's on the other drive: it's kept by its place
+                // there, so the Recycle Bin it goes to is that drive's.
+                if (second) aside = aside with { Path = FolderMove.RealPlace(aside.Path, _db.MovedFolders()) };
                 _db.SaveOldHomes(_db.OldHomes().Append(aside));
             }
             catch (OperationCanceledException)
             {
-                activity.Stop("Stopped linking the folders again", $"{name} is as it was. Its new files may be on the other drive too now, which does no harm.");
+                activity.Stop(second ? "Stopped tidying up" : "Stopped linking the folders again",
+                              $"{name} is as it was. Its new files may be in the other copy too now, which does no harm.");
                 await ReloadAsync();
                 return;
             }
@@ -344,12 +424,15 @@ public sealed partial class PluginsViewModel
                 problems.Add($"{name}: {e.Message}");
             }
         }
-        if (problems.Count == 0)
+        if (problems.Count > 0)
+            activity.Fail(second ? $"{problems.Count} couldn't be tidied up" : $"{problems.Count} couldn't be linked again", string.Join(" ", problems));
+        else if (second)
+            activity.Finish(replaced.Count == 1 ? "Tidied it up" : $"Tidied up {replaced.Count} folders",
+                            "Each is on the other drive just once now. The second copies are on the old copies card.");
+        else
             activity.Finish(replaced.Count == 1 ? "Linked it again" : $"Linked {replaced.Count} folders again",
                             "The plugins write to the other drive again. The folders set aside are on the old copies card.");
-        else
-            activity.Fail($"{problems.Count} couldn't be linked again", string.Join(" ", problems));
-        await ReloadAsync();
+        await RemeasureAsync(replaced.SelectMany(Owners).Distinct().ToArray());
     }
 
     /// <summary>Move it…: the whole folder goes into one you pick, and every link follows.</summary>

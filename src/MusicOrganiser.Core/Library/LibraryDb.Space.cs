@@ -46,6 +46,12 @@ public sealed partial class LibraryDb
 
     public void SaveSpareCopies(IEnumerable<SpareCopy> copies) => SetSetting(SpareCopiesKey, JsonSerializer.Serialize(copies.ToList()));
 
+    /// <summary>
+    /// Whether spare copies have been looked for at all (an empty list once looked counts). Plugins measured before the
+    /// look existed, or a measure stopped part way, leave it unknown until the next full measure (F12 note, 27 Oct).
+    /// </summary>
+    public bool SpareCopiesLookedFor() => GetSetting(SpareCopiesKey) is { Length: > 0 };
+
     /// <summary>Setting: plugin folders moved to another drive (see <see cref="FolderMove"/>).</summary>
     public const string MovedFoldersKey = "space_moved_folders";
 

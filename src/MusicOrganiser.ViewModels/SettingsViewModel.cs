@@ -75,6 +75,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] string _tab = "";
     [ObservableProperty] string _sampleIndexText = "";
     public string LibraryLocation => _db.FilePath;
+    /// <summary>The app's own files and the room left on their drive (Settings › General, and the left bar's sign when it's nearly full).</summary>
+    public AppFilesViewModel AppFiles { get; }
 
     /// <summary>The scripts that let the app ask Bitwig and FL Studio what they show.</summary>
     public IReadOnlyList<DawLinkSetting> Links { get; }
@@ -128,6 +130,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         _db = db;
         _main = main;
+        AppFiles = new AppFilesViewModel(main, main.DataFolder,
+            Core.Space.AppFiles.Databases(db.FilePath, main.SoundLibrary.FilePath, Core.Midi.MidiIndex.PathBeside(db.FilePath)));
         Appearance = new AppearanceViewModel(db);
         Liked = new LikedSettingsViewModel(db);
         foreach (var r in db.Roots()) ProjectFolders.Add(r);

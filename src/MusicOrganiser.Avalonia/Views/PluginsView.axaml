@@ -332,6 +332,29 @@
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="{Binding SpareTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding SpareNote}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                        <!-- One format at a time (F12 note, 27 Oct): a format you never use goes in one go. -->
+                        <ItemsControl ItemsSource="{Binding SpareFormats}" Margin="0,6,0,0">
+                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:SpareFormat">
+                                    <Button Classes="chip" FontSize="12" Margin="0,0,6,0" Content="{Binding Text}" Command="{Binding ReviewCommand}"
+                                            ToolTip.Tip="{Binding Tip}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+            <!-- Spare copies not looked for yet: they're found when every plugin is measured, so say so and offer to look (F12 note, 27 Oct). -->
+            <Border Classes="card" Padding="16,10,10,10" Margin="0,0,0,12" IsVisible="{Binding SparesUnknown}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="Look now" Command="{Binding LookForSparesCommand}" VerticalAlignment="Center"
+                            ToolTip.Tip="Look through your plugin folders for copies in formats none of your projects use. It runs in the background." />
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Spare plugin copies haven't been looked for yet" FontWeight="SemiBold" TextWrapping="Wrap"
+                                   Foreground="{StaticResource WarningBrush}" />
+                        <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
+                                   Text="Many plugins install as VST2, VST3, AAX and CLAP at once, and your DAWs only load one. Look now finds the copies none of your projects use, so you can free their room." />
                     </StackPanel>
                 </DockPanel>
             </Border>
@@ -352,6 +375,14 @@
                     <Button DockPanel.Dock="Right" Content="Link again…" Command="{Binding LinkAgainCommand}" VerticalAlignment="Center"
                             ToolTip.Tip="Copy the new files to the other drive, then put the link back" />
                     <TextBlock Text="{Binding ReplacedText}" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="{StaticResource WarningBrush}" />
+                </DockPanel>
+            </Border>
+            <!-- Moved folders that were inside one moved later, from before links inside a moved folder stayed links: two copies on the other drive. -->
+            <Border Classes="card" Padding="16,10,10,10" Margin="0,0,0,12" IsVisible="{Binding HasDoubled}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="Tidy up…" Command="{Binding TidyUpDoubledCommand}" VerticalAlignment="Center"
+                            ToolTip.Tip="Keep one copy of each on the other drive: what's new is copied across, and the second copy goes on the old copies card" />
+                    <TextBlock Text="{Binding DoubledText}" TextWrapping="Wrap" VerticalAlignment="Center" />
                 </DockPanel>
             </Border>
 
@@ -526,6 +557,17 @@
             <StackPanel Spacing="10">
                 <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding Intro}" Classes="muted" TextWrapping="Wrap" />
+                <!-- A whole group (a format of spare copies) ticked or unticked at once. -->
+                <ItemsControl ItemsSource="{Binding Groups}" IsVisible="{Binding HasGroups}">
+                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:CleanupGroup">
+                            <CheckBox IsChecked="{Binding IsTicked}" Margin="0,0,14,0" ToolTip.Tip="{Binding Tip}">
+                                <TextBlock Text="{Binding Text}" FontFamily="{DynamicResource NumberFont}" />
+                            </CheckBox>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
                 <ComboBox ItemsSource="{Binding Uninstallers}" SelectedItem="{Binding PickedUninstaller}" HorizontalAlignment="Stretch"
                           IsVisible="{Binding HasUninstallers}" IsEnabled="{Binding HasChoice}"
                           ToolTip.Tip="The programs Windows lists that look like this plugin's. Pick the right one if the first isn't.">
