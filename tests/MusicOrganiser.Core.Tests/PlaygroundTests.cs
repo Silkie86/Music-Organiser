@@ -241,11 +241,11 @@ public class PlaygroundTests : IDisposable
         var bass = Line(Bar, 36, 41, 43, 36);
         var entry = new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass")]).Entries[0];
         var row = new PlaygroundMatchRow(p, new PlaygroundMatch(entry, null, 0.8, bass, ""));
-        Assert.Equal("▶ With the idea", row.PreviewText);
+        Assert.Equal("With the idea", row.PreviewText);
 
         await p.PreviewMatch(row);
         Assert.True(row.IsPlaying);
-        Assert.Equal("■ Stop", row.PreviewText);
+        Assert.Equal("Stop", row.PreviewText);
         var trying = Assert.IsType<TryingPart>(p.Trying);
         Assert.Equal(p.Layers.Count, trying.Row);   // where Add would put it: a new track
         Assert.Equal(bass.Select(n => n.Key), trying.Notes.Select(n => n.Key));
@@ -803,24 +803,36 @@ public class PlaygroundTests : IDisposable
         var sub = p.ChordIdeas.First(i => i.Title == "Tritone sub");
         Assert.DoesNotContain(p.ChordIdeas, i => i.Idea.Bar == 4 && i.Title != "Turnaround" && i.Title != "Richer chords");
 
-        // 2: trying it shows Db9 striped where G7 is, and plays; the chords themselves don't change yet.
+        // 2: trying it puts Db9 in, striped where G7 was, and it plays: the chord part plays it on screen as it's heard,
+        // with as many notes. G7 stays picked and its ideas stay listed, to try another.
+        var before = p.CurrentSection.Layers[0].Notes.ToList();
         await p.TryIdea(sub);
         Assert.Equal(3, p.ReharmStep);
         Assert.StartsWith("Db", Assert.Single(p.ProposedChords!).Name);
-        Assert.Equal("G7", p.Chords[1].Name);
+        Assert.StartsWith("Db", p.Chords[1].Name);
+        Assert.Equal("G7", p.PickedChord!.Name);
+        Assert.Contains(sub, p.ChordIdeas);
         Assert.Equal("Back to G7", p.BackText);
+        var tried = p.CurrentSection.Layers[0].Notes.Where(n => n.Start >= Bar && n.Start < 2 * Bar).ToList();
+        Assert.Equal(before.Count(n => n.Start >= Bar && n.Start < 2 * Bar), tried.Count);
+        Assert.Contains(tried, n => n.Key % 12 == 1);   // D flat
+        Assert.Equal(tried.Select(n => n.Key), p.SelectedClip!.Notes.Where(n => n.Start >= Bar && n.Start < 2 * Bar).Select(n => n.Key));
 
-        // 3: Back leaves G7 picked to try another; Keep changes it, and the new chord stays picked.
+        // 3: Back puts G7 back as it was, still picked, to try another; Keep changes it, and the new chord stays picked.
         p.BackIdeaCommand.Execute(null);
         Assert.Equal(2, p.ReharmStep);
         Assert.Null(p.ProposedChords);
         Assert.Equal("G7", p.Chords[1].Name);
-        await p.TryIdea(sub);
+        Assert.Equal(before, p.CurrentSection.Layers[0].Notes);
+        Assert.Empty(p.CurrentSection.ChordTrack);
+        await p.TryIdea(p.ChordIdeas.First(i => i.Title == "Tritone sub"));
         p.KeepIdeaCommand.Execute(null);
         Assert.StartsWith("Db", p.Chords[1].Name);
         Assert.Equal(2, p.ReharmStep);
         Assert.StartsWith("Db", p.PickedChord!.Name);
         Assert.Null(p.ProposedChords);
+        Assert.StartsWith("Kept Tritone sub", p.Message);
+        Assert.Equal(tried.Select(n => n.Key), p.CurrentSection.Layers[0].Notes.Where(n => n.Start >= Bar && n.Start < 2 * Bar).Select(n => n.Key));
 
         // Undo puts G7 back, still picked; Harmony › Reharmonise picks the chord under the play marker when none is.
         p.UndoCommand.Execute(null);
@@ -1132,12 +1144,12 @@ public class PlaygroundTests : IDisposable
         var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
         var p = main.Playground;
 
-        // A next chord with no chord clip to play it makes a chord track, and it shows on the timeline.
+        // A next chord with no chord clip to play it goes on the chord track (heard from there), and the rows stay in step.
         var bass = Line(Bar, 36, 41);
         p.AddFromLibrary(new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass")]).Entries[0], bass, "Bass");
         p.AddNextChord(ChordSymbol.Parse("G7")!.Value);
         Assert.Equal(p.CurrentSection.Layers.Count, p.Layers.Count);
-        Assert.Contains(p.Layers, r => r.Role == MidiRoles.Chords);
+        Assert.Equal("G7", p.CurrentSection.ChordTrack[^1].Chord.Name);
 
         // A melody dragged onto a track written from the chords gets a new track, and keeps its notes.
         p.WriteBassCommand.Execute(null);

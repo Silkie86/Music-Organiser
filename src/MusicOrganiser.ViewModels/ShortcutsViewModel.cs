@@ -138,6 +138,8 @@ public sealed partial class ShortcutsViewModel : ObservableObject
         new("playground.writeGuideTones", Playground, "Write guide tones", ""),
         new("playground.smooth", Playground, "Smooth inversions on the picked track", ""),
         new("playground.alternatives", Playground, "Find alternatives for the picked clip", ""),
+        new("playground.snapToChords", Playground, "Snap the notes picked on the piano roll (or all of the clip's) to the chords", ""),
+        new("playground.snapChord", Playground, "Snap to chord: notes moved on the piano roll go only to notes of the chords", ""),
         new("playground.mute", Playground, "Mute the picked track", ""),
         new("playground.solo", Playground, "Solo the picked track", ""),
         new("playground.duplicateTrack", Playground, "Duplicate the picked track", ""),

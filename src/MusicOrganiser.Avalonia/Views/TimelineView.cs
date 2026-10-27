@@ -734,7 +734,17 @@ public sealed class TimelineView : Control
             dc.DrawRectangle(soft, new Pen(accent, 2, new DashStyle([4, 3], 0)), new RoundedRect(rect, 5));
             using (dc.PushClip(rect))
             {
-                dc.DrawText(Text($"▶ Trying: {tr.Name}", 11, text, bold), new Point(rect.X + 5, rect.Y + 1));
+                // The play triangle drawn, as on the buttons, not typed (a typed one is a blue emoji on Windows).
+                var play = new StreamGeometry();
+                using (var gc = play.Open())
+                {
+                    gc.BeginFigure(new Point(rect.X + 5, rect.Y + 4), true);
+                    gc.LineTo(new Point(rect.X + 12, rect.Y + 8));
+                    gc.LineTo(new Point(rect.X + 5, rect.Y + 12));
+                    gc.EndFigure(true);
+                }
+                dc.DrawGeometry(text, null, play);
+                dc.DrawText(Text($"Trying: {tr.Name}", 11, text, bold), new Point(rect.X + 16, rect.Y + 1));
                 if (tr.Notes.Count > 0)
                 {
                     int lo = tr.Notes.Min(n => n.Key), hi = Math.Max(lo + 11, tr.Notes.Max(n => n.Key));

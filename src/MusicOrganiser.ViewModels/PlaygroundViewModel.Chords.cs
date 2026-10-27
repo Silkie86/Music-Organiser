@@ -31,8 +31,47 @@ public sealed partial class PlaygroundViewModel
     partial void OnHearChordTrackChanged(bool value)
     {
         SaveOption(HearChordTrackKey, value ? "1" : "0");
+        OnPropertyChanged(nameof(ChordTrackMuted));
         if (_playing) _ = PlayAsync(keepPlace: true);
         PlayInBitwigSoon();
+    }
+
+    /// <summary>
+    /// The M on the chord lane, as each track has (Solomon, 2026-10-27: "no ease way mute the chord track"): its plain
+    /// chords aren't played, and the parts still follow it.
+    /// </summary>
+    public bool ChordTrackMuted
+    {
+        get => !HearChordTrack;
+        set => HearChordTrack = !value;
+    }
+
+    /// <summary>Where the parts ended at the last change, so the chord track goes round only when they grow past it.</summary>
+    long _partsEnd;
+
+    long PartsEnd() => Section.Layers.SelectMany(l => l.Clips).Select(c => c.End).DefaultIfEmpty(0).Max();
+
+    /// <summary>
+    /// The chord track going round under parts longer than it (Solomon, 2026-10-27: "chord track doesnt loop. it should
+    /// play along with the midi if the midi is longer that it"): when the parts now go past its end, and it reached their
+    /// end before, its chords play round again to their new end. One stopped short of the parts on purpose (its last
+    /// chord taken off) stays as it is, and chords already on it never change.
+    /// </summary>
+    void ChordTrackGoesRound()
+    {
+        var end = PartsEnd();
+        var was = _partsEnd;
+        _partsEnd = end;
+        if (end <= was || !HasChordTrack) return;
+        var track = Section.ChordTrack;
+        var (from, to) = (track.Min(c => c.Start), track.Max(c => c.End));
+        if (to < was || to >= end) return;
+        var round = to - from;
+        var added = new List<PlaygroundChord>();
+        for (var shift = round; from + shift < end; shift += round)
+            foreach (var c in track.Where(c => c.Start + shift < end))
+                added.Add(new PlaygroundChord { Start = c.Start + shift, Length = Math.Min(c.Length, end - c.Start - shift), Chord = c.Chord });
+        Section.ChordTrack = track.Concat(added).OrderBy(c => c.Start).ToList();
     }
 
     /// <summary>The chord track's notes as heard: each chord voiced plainly, root at the bottom.</summary>
@@ -147,9 +186,6 @@ public sealed partial class PlaygroundViewModel
         }
     }
 
-    /// <summary>Whether the chord track has chords anywhere from <paramref name="from"/> to <paramref name="to"/>.</summary>
-    static bool OnChordTrack(PlaygroundSection section, long from, long to) => section.ChordTrack.Any(c => c.Start < to && c.End > from);
-
     /// <summary>The chords of <paramref name="lane"/> from <paramref name="from"/> to <paramref name="to"/> put on the chord track there, over what it had.</summary>
     static void PutOnChordTrack(PlaygroundSection section, IReadOnlyList<TimedChord> lane, long from, long to)
     {
@@ -159,15 +195,35 @@ public sealed partial class PlaygroundViewModel
     }
 
     /// <summary>
-    /// New chords from <paramref name="from"/> to <paramref name="to"/>: on the chord track where it has chords there, else
-    /// played by the chord parts (<see cref="Rechord"/>).
+    /// New chords from <paramref name="from"/> to <paramref name="to"/>, on the chord track (Solomon, 2026-10-27: "notes dont
+    /// follow the reharm on screen", "reharm by default should keep the same amount of notes"): every part follows them as
+    /// it's set to, a chord part with as many notes as it had, in its rhythm. A chord part changed by hand doesn't follow, so
+    /// its notes there are re-voiced on the new chords the same way, and it stays as it is everywhere else.
     /// </summary>
-    /// <returns>Whether it made a new chord part's track.</returns>
-    static bool SetChords(PlaygroundSection section, IReadOnlyList<TimedChord> lane, long from, long to)
+    void SetChords(IReadOnlyList<TimedChord> lane, long from, long to)
     {
-        if (!OnChordTrack(section, from, to)) return Rechord(section, lane, from, to);
-        PutOnChordTrack(section, lane, from, to);
-        return false;
+        PutOnChordTrack(Section, lane, from, to);
+        var under = lane.Where(c => c.End > from && c.Start < to)
+                        .Select(c => new TimedChord(Math.Max(c.Start, from), Math.Min(c.End, to) - Math.Max(c.Start, from), c.Chord)).ToList();
+        bool Here(NoteEvent n) => n.Start >= from && n.Start < to;
+        foreach (var layer in Section.Layers.Where(l => l.Written.Length == 0))
+        {
+            var pinned = layer.Clips.Where(c => c.Pinned && c.Start < to && c.End > from &&
+                                                (c.Role == MidiRoles.Chords || c.Role == MidiRoles.Other && layer.Role == MidiRoles.Chords)).ToList();
+            foreach (var c in pinned)
+            {
+                var played = c.Render();
+                var revoiced = ChordFollow.Apply(played.Where(Here).ToList(), under, FollowWay.Degree, MidiRoles.Chords, _session.Style);
+                c.Notes = played.Where(n => !Here(n)).Concat(revoiced).Select(n => n with { Start = n.Start - c.Start }).ToList();
+                c.Loop = c.Length;
+                c.Offset = 0;
+                c.Transpose = 0;
+                c.Inversion = 0;   // Render already turned them
+                c.Fits = [];
+                c.Under = [];
+            }
+            if (pinned.Count > 0) layer.Render();
+        }
     }
 
     /// <summary>The chord-lane menu's "Remove this chord", and Delete or Backspace after clicking it: the picked chord off the chord track.</summary>
@@ -185,6 +241,7 @@ public sealed partial class PlaygroundViewModel
         Message = $"{picked.Name} taken off the chord track. Undo puts it back.";
     }
 
+    [RelayCommand]
     void ClearChordTrack()
     {
         if (!HasChordTrack) return;
@@ -223,6 +280,67 @@ public sealed partial class PlaygroundViewModel
         if (!KeepHeardChords(from, to)) return;
         Message = $"The chords heard are on the chord track now, and {row.Clip.Name} follows them: " +
                   $"{ChordFollow.Label(row.Clip.Way).ToLowerInvariant()}. Click a chord to change it and hear it follow.";
+    }
+
+    /// <summary>
+    /// A double-click on the chord lane (Solomon, 2026-10-27: "should be able to double click chord track to add a chord"):
+    /// a chord goes on the chord track at that bar and is picked, so Reharm shows what else it could be. In a gap it's what
+    /// usually comes after the chord before (the key's home chord when there's none), lasting a bar or to the next chord;
+    /// on a chord heard from the parts, that chord goes on the track; inside a longer chord-track chord, it's cut there and
+    /// the new half picked.
+    /// </summary>
+    [RelayCommand]
+    void AddChordAt(long tick)
+    {
+        if (_tryBefore is not null) BackIdea();
+        var at = Math.Clamp(tick / Bar * Bar, 0, Math.Max(0, Section.Length - Bar));
+        var key = Harmony.Key;
+        if (Section.ChordTrack.FirstOrDefault(c => c.Start <= at && c.End > at) is { } set)
+        {
+            if (set.Start < at)
+            {
+                Remember();
+                var half = new PlaygroundChord { Start = at, Length = set.End - at, Chord = set.Chord };
+                set.Length = at - set.Start;
+                Section.ChordTrack = Section.ChordTrack.Append(half).OrderBy(c => c.Start).ToList();
+                Changed();
+                Message = $"{set.Chord.NameIn(key)} cut at bar {at / Bar + 1}: pick what its second half plays under Reharm, or drag its edges. Undo puts it back together.";
+            }
+            PickChordAt(at);
+            return;
+        }
+        var lane = Harmony.Lane;
+        if (lane.FirstOrDefault(c => c.Start <= at && c.End > at) is { } heard)
+        {
+            Remember();
+            PutOnChordTrack(Section, [heard], heard.Start, heard.End);
+            Changed();
+            PickChordAt(heard.Start);
+            Message = $"{heard.Chord.NameIn(key)} is on the chord track now, so it stays whatever the parts do: pick another under Reharm to change it. Undo takes it off.";
+            return;
+        }
+        var before = lane.Where(c => c.End <= at).ToList();
+        var chord = before.Count > 0
+            ? (_model ?? ProgressionModel.Learn([]).With(ProgressionModel.FromCharts)).Next(before[^1].Chord, before.Count > 1 ? before[^2].Chord : null)
+                .Select(n => (ChordSymbol?)n.Chord).FirstOrDefault()
+            : null;
+        chord ??= key is { } k ? ChordSymbol.Parse(ChordSymbol.Names[k.Tonic] + (k.Minor ? "m" : "")) : ChordSymbol.Parse("C");
+        if (chord is not { } adding) return;
+        var next = lane.Where(c => c.Start > at).Select(c => c.Start).DefaultIfEmpty(Section.Length).Min();
+        Remember();
+        Section.ChordTrack = Section.ChordTrack.Append(new PlaygroundChord { Start = at, Length = Math.Min(Bar, next - at), Chord = adding })
+                                   .OrderBy(c => c.Start).ToList();
+        Changed();
+        PickChordAt(at);
+        Message = $"{adding.NameIn(key)} added to the chord track at bar {at / Bar + 1}" +
+                  (before.Count > 0 ? $", what usually comes after {before[^1].Chord.NameIn(key)}" : "") +
+                  ": pick another under Reharm, or drag its edges. Undo takes it off.";
+    }
+
+    /// <summary>The chord on the lane at <paramref name="at"/> picked, as clicking it does.</summary>
+    void PickChordAt(long at)
+    {
+        if (Chords.FirstOrDefault(c => c.Timed.Start <= at && c.Timed.End > at) is { } cell) PickChord(cell);
     }
 
     /// <summary>A chord on the end of the chord track, a bar long, after its last chord.</summary>
@@ -372,15 +490,16 @@ public sealed partial class PlaygroundViewModel
 
     /// <summary>
     /// One go round of chords (from 0) on the chord track: over the highlight, going round to fill it, else from bar 1 when
-    /// the track is empty, else after its last chord. The timeline grows to fit. Where they went; null when it's full.
+    /// the track is empty, going round to the end of the parts when they're longer, else after its last chord. The
+    /// timeline grows to fit. Where they went; null when it's full.
     /// </summary>
     (long From, long To)? PlaceOnChordTrack(IReadOnlyList<TimedChord> lane)
     {
         var length = lane[^1].End;
         var at = Loop?.Start ?? (HasChordTrack ? Section.ChordTrack.Max(c => c.End) : 0);
         if (at >= (long)MaxBars * Bar) { Message = $"The timeline is full ({MaxBars} bars)."; return null; }
-        // Over a highlight it goes round to fill it.
-        var to = Loop is { } r ? r.End : at + length;
+        // Over a highlight it goes round to fill it; on an empty track, under all the parts.
+        var to = Loop is { } r ? r.End : HasChordTrack ? at + length : Math.Max(at + length, PartsEnd());
         var placed = new List<TimedChord>();
         for (var go = at; go < to; go += length)
             placed.AddRange(lane.Select(c => c with { Start = c.Start + go }));
@@ -495,8 +614,7 @@ public sealed partial class ProgressionRow(PlaygroundViewModel owner, Progressio
     public string BarsText => progression.Bars == 1 ? "1 bar" : $"{progression.Bars} bars";
     public string Mode => progression.Minor ? "minor" : "major";
     public string Tip => $"{Names}\n{Romans} ({Mode})\nHeard in {progression.Example.Title}, {progression.Example.SourceName}";
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(PlayText))] bool _isPlaying;
-    public string PlayText => IsPlaying ? "■" : "▶";
+    [ObservableProperty] bool _isPlaying;
 
     /// <summary>Whether a search word is in its chord names, its Roman numerals, or says major or minor.</summary>
     public bool Matches(string word) => InNumerals(progression, word) || InNames(Names, word);

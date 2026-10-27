@@ -73,10 +73,7 @@
                         <Grid ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,2">
                             <Button Command="{Binding PlayCommand}" Padding="9,5" Margin="0,0,10,0" VerticalAlignment="Center"
                                     ToolTip.Tip="Listen, already moved into this song's key (with a stand-in sound)">
-                                <Panel>
-                                    <TextBlock Text="▶" IsVisible="{Binding !IsPlaying}" />
-                                    <TextBlock Text="■" IsVisible="{Binding IsPlaying}" />
-                                </Panel>
+                                <views:PlayIcon IsPlaying="{Binding IsPlaying}" />
                             </Button>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
                                 <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
@@ -172,16 +169,18 @@
                     <WrapPanel>
                         <Button Command="{Binding PlayTogetherCommand}" Margin="0,0,6,6" Padding="12,6" Classes="accent" IsVisible="{Binding CanPlayTogether}"
                                 ToolTip.Tip="This part on top of the song's own MIDI, so you can hear if they go together">
-                            <Panel>
-                                <TextBlock Text="▶  Play with the song" IsVisible="{Binding !IsPlayingTogether}" />
-                                <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingTogether}" />
-                            </Panel>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <views:PlayIcon IsPlaying="{Binding IsPlayingTogether}" />
+                                <TextBlock Text="Play with the song" IsVisible="{Binding !IsPlayingTogether}" />
+                                <TextBlock Text="Stop" IsVisible="{Binding IsPlayingTogether}" />
+                            </StackPanel>
                         </Button>
                         <Button Command="{Binding PlayAloneCommand}" Margin="0,0,6,6" Padding="12,6" ToolTip.Tip="This part on its own">
-                            <Panel>
-                                <TextBlock Text="▶  On its own" IsVisible="{Binding !IsPlayingAlone}" />
-                                <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingAlone}" />
-                            </Panel>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <views:PlayIcon IsPlaying="{Binding IsPlayingAlone}" />
+                                <TextBlock Text="On its own" IsVisible="{Binding !IsPlayingAlone}" />
+                                <TextBlock Text="Stop" IsVisible="{Binding IsPlayingAlone}" />
+                            </StackPanel>
                         </Button>
                         <ToggleButton Classes="chip" Margin="0,0,6,6" VerticalAlignment="Center"
                                       IsChecked="{Binding $parent[UserControl].((vm:SongMidiViewModel)DataContext).Midi.Loop}"

@@ -171,6 +171,8 @@
                                       ToolTip.Tip="Snap relative: dragged clips move in whole grid steps but keep how far off the grid they sat, so a pushed clip stays pushed. With Grid on too, whichever is nearer wins." />
                         <ToggleButton Content="Obj" IsChecked="{Binding SnapObjects}"
                                       ToolTip.Tip="Snap to objects: dragged clips catch the starts and ends of other clips, the highlight, labels and the play marker when they come close" />
+                        <ToggleButton Content="Chord" IsChecked="{Binding SnapChord}"
+                                      ToolTip.Tip="Snap to chord: notes you drag, put in or move with the arrow keys on the piano roll go only to notes of the chord under them (its root, 3rd, 5th, 7th and the notes its name has)" />
                     </StackPanel>
                     <StackPanel Classes="group">
                         <ToggleButton Content="Jazz" IsChecked="{Binding !IsClassical}"
@@ -186,10 +188,7 @@
                             <Path Classes="buttonIcon filled" Data="M1,1 H3 V11 H1 Z M11,1 V11 L4,6 Z" />
                         </Button>
                         <Button Classes="accent" MinWidth="40" Command="{Binding PlayCommand}" ToolTip.Tip="Play or stop, from the marker on the bar numbers (Space)">
-                            <Panel>
-                                <Path Classes="buttonIcon filled" Data="M2,0.5 L11,6 L2,11.5 Z" IsVisible="{Binding !IsPlaying}" />
-                                <Path Classes="buttonIcon filled" Data="M1.5,1.5 H10.5 V10.5 H1.5 Z" IsVisible="{Binding IsPlaying}" />
-                            </Panel>
+                            <views:PlayIcon IsPlaying="{Binding IsPlaying}" />
                         </Button>
                         <ToggleButton MinWidth="40" IsChecked="{Binding LoopOn}"
                                       ToolTip.Tip="Loop: Play goes round the highlighted bars, or the whole idea (Ctrl+L)">
@@ -290,11 +289,20 @@
                 <StackPanel Spacing="2" Margin="6,6,6,6">
                     <Panel>
                     <TextBlock Text="Chords" Classes="laneName" Margin="12,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent"
-                               ToolTip.Tip="The chords. Tinted ones are on the chord track (from the Chords tab, no MIDI): drag an edge to stretch one, the middle to move it, everything follows. The rest are heard from the chord and bass parts (everything playing where there are none). Green: home. Red: pulling home. Click one to change it (Reharm)." />
+                               ToolTip.Tip="The chords. Tinted ones are on the chord track (from the Chords tab, no MIDI): drag an edge to stretch one, the middle to move it, everything follows. Double-click to add a chord there. The rest are heard from the chord and bass parts (everything playing where there are none). Green: home. Red: pulling home. Click one to change it (Reharm)." />
                     <views:ChordLaneView Height="28" ContextRequested="OnChordMenu" Items="{Binding Chords}" PickCommand="{Binding PickChordCommand}"
-                                         DragCommand="{Binding DragChordCommand}" Grid="{Binding Grid}" SnapGrid="{Binding SnapGrid}"
+                                         DragCommand="{Binding DragChordCommand}" AddCommand="{Binding AddChordAtCommand}" Grid="{Binding Grid}" SnapGrid="{Binding SnapGrid}"
                                          Picked="{Binding PickedChord}" Proposed="{Binding ProposedChords}" Length="{Binding Length}" Position="{Binding Position}" Inset="210"
                                          ViewFrom="{Binding ViewFrom}" ViewTo="{Binding ViewTo}" />
+                    <!-- Mute and clear, ending where each track's buttons end (Solomon, 2026-10-27: "no ease way mute the chord track"). -->
+                    <Panel Width="202" HorizontalAlignment="Left" VerticalAlignment="Center" IsVisible="{Binding HasChordTrack}">
+                        <StackPanel Classes="group" HorizontalAlignment="Right">
+                            <ToggleButton Classes="tiny" Content="M" IsChecked="{Binding ChordTrackMuted}"
+                                          ToolTip.Tip="Mute the chord track: its chords aren't played, and the parts still follow them" />
+                            <Button Classes="tiny" Content="✕" Command="{Binding ClearChordTrackCommand}"
+                                    ToolTip.Tip="Clear the chord track: the chords are heard from the parts again (Undo puts them back)" />
+                        </StackPanel>
+                    </Panel>
                     </Panel>
                     <Panel>
                     <TextBlock Text="Energy" Classes="laneName" Margin="12,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent"
@@ -438,6 +446,11 @@
                                                          UpCommand="{Binding SelectedClip.TurnUpCommand}" DownCommand="{Binding SelectedClip.TurnDownCommand}" ByCommand="{Binding SelectedClip.TurnByCommand}" />
                                         <TextBlock Text="Inversion" Classes="label" ToolTip.Tip="Turn its chords up (each chord's bottom note up an octave) or down (its top note down an octave)" />
                                     </DockPanel>
+                                    <!-- Solomon, 2026-10-27: "select a few notes and have it snapped to chord" -->
+                                    <StackPanel Classes="group" IsVisible="{Binding SelectedClip.CanSnap}">
+                                        <Button Content="Snap to the chords" Classes="tiny" Command="{Binding SnapToChordsCommand}"
+                                                ToolTip.Tip="Moves the notes picked on the piano roll (Ctrl+click them, or Ctrl+drag a box round them), or all of the clip's when none are, to the nearest notes of the chords under them. Undo puts them back. The Chord switch by the snap buttons at the top keeps notes on the chords as you move them." />
+                                    </StackPanel>
                                     <DockPanel ToolTip.Tip="Write each note's name on it and on the keys (C4, F#3), or what it is over the chord heard there (3, ♭7, 9, 13): handy for jazz and gospel tensions">
                                         <ComboBox DockPanel.Dock="Right" Width="112" FontSize="12" ItemsSource="{x:Static vm:PlaygroundViewModel.NoteLabelChoices}" SelectedItem="{Binding NoteLabelPick}" />
                                         <TextBlock Text="Notes say" Classes="label" />
@@ -487,7 +500,8 @@
                                            Period="{Binding SelectedClip.Loop}" Length="{Binding SelectedClip.Loop}" Position="{Binding SelectedClip.Position}"
                                            Section="{Binding SelectedClip.Highlight}" SectionCommand="{Binding SelectedClip.PickBarsCommand}" SeekCommand="{Binding SelectedClip.SeekCommand}"
                                            EditedCommand="{Binding SelectedClip.EditedCommand}" ClashTest="{Binding SelectedClip.Clashes}"
-                                           ToolTip.Tip="One go round of the clip. The other parts playing then are grey behind. Click to add a note (it copies the length and velocity of the last note you clicked), drag to move, drag its end to stretch, right-click to remove; red notes fight the chords (a jazz tension or a quick passing note isn't marked). Drag along the bar numbers to pick part of the clip: Suggest then finds the bit of each part that fits there, to swap in (right-click the bar numbers to let go). Notes snap with the Grid, Relative and Objects switches above; hold Shift to place freely." />
+                                           Selection="{Binding PickedNotes}" SnapChord="{Binding SnapChord}" ChordTest="{Binding SelectedClip.FitsChords}"
+                                           ToolTip.Tip="One go round of the clip. The other parts playing then are grey behind. Click to add a note (it copies the length and velocity of the last note you clicked), drag to move, drag its end to stretch, right-click to remove; red notes fight the chords (a jazz tension or a quick passing note isn't marked). Ctrl+click or Ctrl+drag a box to pick notes (Ctrl+A all, Esc none): they drag, move with the arrow keys and delete together, and Snap to the chords puts them on notes of the chords. Drag along the bar numbers to pick part of the clip: Suggest then finds the bit of each part that fits there, to swap in (right-click the bar numbers to let go). Notes snap with the Grid, Relative and Objects switches above; hold Shift to place freely." />
                 </DockPanel>
             </Grid>
             <!-- The side panel's edge: drag to make it wider or narrower. -->
@@ -559,7 +573,10 @@
                                                 </Grid>
                                                 <StackPanel Classes="group actions">
                                                     <Button Classes="tiny" Command="{Binding PreviewCommand}" ToolTip.Tip="Hear it with the idea, where it would go">
-                                                        <TextBlock Text="{Binding PreviewText}" />
+                                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                                            <views:PlayIcon IsPlaying="{Binding IsPlaying}" IsVisible="{Binding !IsPreparing}" />
+                                                            <TextBlock Text="{Binding PreviewText}" />
+                                                        </StackPanel>
                                                     </Button>
                                                     <Button Content="{Binding AddText}" Classes="tiny" Command="{Binding AddCommand}" ToolTip.Tip="Add: on a new track over the highlight (or from bar 1), moved into key. Swap in: in place of the highlighted bars of the clip you picked." />
                                                 </StackPanel>
@@ -600,7 +617,7 @@
                                             <Grid ColumnDefinitions="Auto,*,Auto,Auto">
                                                 <Button Classes="tiny" Command="{Binding PlayCommand}" Width="26" Margin="0,0,8,0" VerticalAlignment="Center"
                                                         ToolTip.Tip="Hear it, moved into the idea's key">
-                                                    <TextBlock Text="{Binding PlayText}" />
+                                                    <views:PlayIcon IsPlaying="{Binding IsPlaying}" />
                                                 </Button>
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                     <TextBlock Text="{Binding Names}" FontWeight="Medium" TextTrimming="CharacterEllipsis" />
@@ -735,10 +752,7 @@
                                         <Button Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).BackIdeaCommand}"
                                                 Content="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).BackText}" ToolTip.Tip="Leave the chords as they were and try another idea" />
                                         <Button Command="{Binding PreviewCommand}" ToolTip.Tip="Hear the idea with it">
-                                            <Panel>
-                                                <TextBlock Text="▶" IsVisible="{Binding !IsPlaying}" />
-                                                <TextBlock Text="■" IsVisible="{Binding IsPlaying}" />
-                                            </Panel>
+                                            <views:PlayIcon IsPlaying="{Binding IsPlaying}" />
                                         </Button>
                                     </StackPanel>
                                 </StackPanel>

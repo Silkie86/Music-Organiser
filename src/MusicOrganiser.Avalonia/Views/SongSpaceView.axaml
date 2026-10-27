@@ -69,8 +69,10 @@
                                                     <DockPanel Margin="0,2">
                                                         <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsTicked}" VerticalAlignment="Center" Margin="0,0,4,0"
                                                                   ToolTip.Tip="Tick to remove it with Compact" />
-                                                        <Button DockPanel.Dock="Left" Content="▶" Command="{Binding PlayCommand}" Margin="0,0,8,0" VerticalAlignment="Center"
-                                                                ToolTip.Tip="Play it (again to stop)" />
+                                                        <Button DockPanel.Dock="Left" Command="{Binding PlayCommand}" Margin="0,0,8,0" VerticalAlignment="Center"
+                                                                ToolTip.Tip="Play it (again to stop)">
+                                                            <views:PlayIcon />
+                                                        </Button>
                                                         <Button DockPanel.Dock="Right" Content="Show" Command="{Binding ShowCommand}" Margin="8,0,0,0" VerticalAlignment="Center" />
                                                         <TextBlock DockPanel.Dock="Right" Text="{Binding SizeText}" FontFamily="{DynamicResource NumberFont}" FontSize="12"
                                                                    VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" />

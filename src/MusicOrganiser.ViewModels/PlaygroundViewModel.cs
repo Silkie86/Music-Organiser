@@ -112,6 +112,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         Tempo = _session.Tempo;
         KeyText = _session.Key;
         IsClassical = _session.Style == HarmonyStyle.Classical;
+        _partsEnd = PartsEnd();
         ShowSection();
         _showing = false;
     }
@@ -177,6 +178,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
                         NewTempoKey = "playground_new_tempo", NewBarsKey = "playground_new_bars", NewStyleKey = "playground_new_style",
                         UndoStepsKey = "playground_undo_steps", LoopKey = "playground_loop",
                         SnapGridKey = "playground_snap_grid", SnapRelativeKey = "playground_snap_relative", SnapObjectsKey = "playground_snap_objects",
+                        SnapChordKey = "playground_snap_chord",
                         NoteLabelsKey = "playground_note_labels", NoteColoursKey = "playground_note_colours",
                         TrackHeightKey = "playground_track_height", ClipPanelHeightKey = "playground_clip_panel_height",
                         SidePanelWidthKey = "playground_side_width", PianoFoldedKey = "playground_piano_folded";
@@ -218,6 +220,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         SnapGrid = _db.GetSetting(SnapGridKey) != "0";
         SnapRelative = _db.GetSetting(SnapRelativeKey) != "0";
         SnapObjects = _db.GetSetting(SnapObjectsKey) != "0";
+        SnapChord = _db.GetSetting(SnapChordKey) == "1";
         HearChordTrack = _db.GetSetting(HearChordTrackKey) != "0";
         NoteLabelPick = NoteLabelChoices.Contains(_db.GetSetting(NoteLabelsKey) ?? "") ? _db.GetSetting(NoteLabelsKey)! : "Off";
         NoteColourPick = NoteColourChoices.Contains(_db.GetSetting(NoteColoursKey) ?? "") ? _db.GetSetting(NoteColoursKey)! : ByFit;
@@ -293,6 +296,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <param name="before">The idea as it was, saved when a gesture began (it's only remembered once something changes).</param>
     void Remember(string before)
     {
+        // Something else changed while an idea was being tried: it's kept first, as what's shown is what was changed.
+        if (_tryBefore is not null) KeepTried();
         _gesture = 0;
         _undo.Add(before);
         while (_undo.Count > UndoSteps) _undo.RemoveAt(0);
@@ -308,10 +313,12 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// </param>
     void Changed(bool harmony = true, bool settled = true)
     {
+        if (harmony && settled) ChordTrackGoesRound();
         if (harmony && ChordTrackKey() != _followedFor) FollowChordTrack();
         // Parts written from the chords follow when an edit changed the chords heard, or moved or stretched a written clip.
         if (harmony && Section.Layers.Any(l => l.Written.Length > 0) && _writtenFor != WrittenKey(LaneForWriting()))
             RewriteWritten();
+        PickedClipChanged();
         Revision++;
         if (settled) SaveCurrent();
         if (harmony) HarmonyChanged();
@@ -324,9 +331,24 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     void SaveCurrent()
     {
-        // A cut-down playground is a sketch: nothing to keep until Open in Playground takes it over.
-        try { if (!IsQuick) _store.SaveCurrent(_session); }
+        // A cut-down playground is a sketch: nothing to keep until Open in Playground takes it over. While an idea is
+        // being tried, the idea is kept as it was before it, until it's kept.
+        try { if (!IsQuick) _store.SaveCurrent(_tryBefore is { } before ? PlaygroundSession.FromJson(before) ?? _session : _session); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Couldn't save the idea: {e.Message}"; }
+    }
+
+    /// <summary>
+    /// The picked clip as it plays now, whatever changed it (Solomon, 2026-10-27: "even after you press keep it still doesnt
+    /// change on screen"): the piano roll and the panel beside it show its notes again, and when the change replaced the
+    /// clip (cut it in two, or put new chords over it) the one now in its place is picked.
+    /// </summary>
+    void PickedClipChanged()
+    {
+        if (SelectedClip is not { } picked) return;
+        if (Layers.Contains(picked.Track) && picked.Track.Layer.Clips.Contains(picked.Clip)) { picked.Changed(); return; }
+        var track = Layers.FirstOrDefault(r => r.Layer == picked.Track.Layer);
+        var clip = track?.Layer.Clips.FirstOrDefault(c => c.Start <= picked.Clip.Start && c.End > picked.Clip.Start) ?? track?.Layer.Clips.FirstOrDefault();
+        SelectedClip = track is null || clip is null ? null : new ClipRow(this, track, clip);
     }
 
     /// <summary>The chord track as parts last followed it.</summary>
@@ -359,6 +381,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     [RelayCommand]
     void Undo()
     {
+        if (_tryBefore is not null) { BackIdea(); return; }   // the idea being tried is what Undo takes back first
         if (_undo.Count == 0) return;
         _redo.Add(_session.ToJson());
         Restore(_undo[^1]);
@@ -371,6 +394,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     void Redo()
     {
         if (_redo.Count == 0) return;
+        if (_tryBefore is not null) BackIdea();
         _undo.Add(_session.ToJson());
         Restore(_redo[^1]);
         _redo.RemoveAt(_redo.Count - 1);
@@ -406,6 +430,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     [RelayCommand]
     void SaveIdea()
     {
+        if (_tryBefore is not null) KeepTried();   // saved as it's shown and heard
         var named = _session.Name;
         try
         {
@@ -882,7 +907,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// </summary>
     /// <remarks>
     /// Chords first, step 2 (Solomon, 2026-10-22): over the chord track it follows the chords there, the way picked for
-    /// it (<see cref="PlaygroundClip.Way"/>). Nudging clashes still moves each go round to fit first.
+    /// it (<see cref="PlaygroundClip.Way"/>). Nudging clashes moves the whole clip into the key first.
     /// </remarks>
     void Refit(PlaygroundLayer layer, PlaygroundClip clip) => Refit(Section, layer, clip);
 
@@ -905,7 +930,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         }
         var leaveOut = role == MidiRoles.Bass ? section.Layers.Where(l => l.Role != MidiRoles.Chords).ToList() : [layer];
         var lane = SectionHarmony.Of(section, _session.Key, _session.Style, leaveOut).Lane;
-        clip.Fits = ClipFit.Repeats(clip, lane, _session.Style);
+        // Over the chord track a line nudging its clashes moves as a whole, into the key, and the nudges do the rest.
+        clip.Fits = clip.Under.Count > 0 ? ClipFit.Whole(clip, lane, _session.Style) : ClipFit.Repeats(clip, lane, _session.Style);
     }
 
     /// <summary>The chord track's chords under <paramref name="clip"/>, from its start, when it follows them.</summary>
@@ -981,6 +1007,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             return;
         }
         if (Matches.Count > 0 || target is not null) _ = FindMatchesAsync();
+    }
+
+    partial void OnSelectedClipChanged(ClipRow? oldValue, ClipRow? newValue)
+    {
+        if (oldValue?.Clip != newValue?.Clip) PickedNotes = null;   // another clip: none of its notes are picked yet
     }
 
     partial void OnSelectedClipChanged(ClipRow? value)
@@ -1239,6 +1270,45 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     partial void OnSnapGridChanged(bool value) => SaveOption(SnapGridKey, value ? "1" : "0");
     partial void OnSnapRelativeChanged(bool value) => SaveOption(SnapRelativeKey, value ? "1" : "0");
     partial void OnSnapObjectsChanged(bool value) => SaveOption(SnapObjectsKey, value ? "1" : "0");
+
+    /// <summary>
+    /// Notes dragged, put in or moved with the arrow keys on the piano roll go only to notes that go with the chord under
+    /// them (Solomon, 2026-10-27: "select a few notes and have it snapped to chord so it only allows notes that go with the
+    /// chords to be moved to").
+    /// </summary>
+    [ObservableProperty] bool _snapChord;
+    partial void OnSnapChordChanged(bool value) => SaveOption(SnapChordKey, value ? "1" : "0");
+
+    /// <summary>The notes picked on the piano roll (Ctrl+click, a Ctrl+drag box, Ctrl+A), as it shows them: snapped, moved and deleted together.</summary>
+    [ObservableProperty] IReadOnlyList<NoteEvent>? _pickedNotes;
+
+    /// <summary>
+    /// The notes picked on the piano roll (all of them when none are) each moved to the nearest note that goes with the chord
+    /// under it, a root, 3rd, 5th, 7th or a note the chord's name has (Solomon, 2026-10-27). One undo step; they stay picked.
+    /// </summary>
+    [RelayCommand]
+    void SnapToChords()
+    {
+        if (SelectedClip is not { } row) { Message = "Pick a clip first, then the notes to snap on its piano roll."; return; }
+        if (row.FitsChords is not { } fits) { Message = "No chords under it to snap to."; return; }
+        var notes = row.Notes;
+        // (Read before the notes change: the piano roll lets go of picked notes that are no longer there.)
+        var anyPicked = PickedNotes is { Count: > 0 };
+        var picked = anyPicked ? PickedNotes!.Where(notes.Contains).ToHashSet() : notes.ToHashSet();
+        var moved = new List<NoteEvent>();
+        var snapped = notes.Select(n =>
+        {
+            if (!picked.Contains(n)) return n;
+            var to = n with { Key = ClipRow.NearestFit(n, fits, -1) };
+            moved.Add(to);
+            return to;
+        }).ToList();
+        var changed = snapped.Zip(notes).Count(x => x.First != x.Second);
+        if (changed == 0) { Message = $"{(anyPicked ? "The notes picked" : "Its notes")} all go with the chords already."; return; }
+        SetClipNotes(row, snapped);
+        PickedNotes = anyPicked ? moved : null;
+        Message = $"{changed} note{(changed == 1 ? "" : "s")} moved onto the chords. Undo puts {(changed == 1 ? "it" : "them")} back.";
+    }
 
     [RelayCommand] void SelectClip(ClipPick? pick) => PickClip(pick is null ? null : Layers.FirstOrDefault(r => r.Layer == pick.Track), pick?.Clip);
 
@@ -1626,6 +1696,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     void RefreshIdeas()
     {
+        if (_tryBefore is not null) return;   // an idea being tried: the ideas stay those for the chords as they were
         Ideas.Clear();
         if (IsQuick) return;   // the small playground shows no ideas, so it doesn't work them out (or read every chord part for next chords)
         var h = Harmony;
@@ -1731,20 +1802,44 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     {
         if (RangeOf(idea) is not { } range) return;
         Remember();
-        if (idea.Whole && !asPart)
-        {
+        if (PutIdea(idea, range, asPart)) ShowSection();   // a new chord part's track to show
+        Changed();
+        Message = KeptText(idea, range, asPart);
+    }
+
+    /// <summary>
+    /// An idea's chords put in from <paramref name="range"/>'s start to its end: on the chord track, so every part follows
+    /// them as it's set to, or with <paramref name="asPart"/> played plainly by a Chords part.
+    /// </summary>
+    /// <returns>Whether it made a new track.</returns>
+    bool PutIdea(Reharm idea, (long From, long To) range, bool asPart)
+    {
+        if (asPart) return Rechord(Section, idea.Lane, range.From, range.To);
+        if (idea.Whole)
             // The chords were made for these parts as they are, so they don't follow them (each can be told to).
             foreach (var clip in PlaygroundSession.Audible(Section).Where(l => l.Role != MidiRoles.Drums)
                                                   .SelectMany(l => l.Clips).Where(c => c.Start < range.To && c.End > range.From && c.Follow == FollowWay.Auto))
                 clip.Follow = FollowWay.None;
-            PutOnChordTrack(Section, idea.Lane, range.From, range.To);
-        }
-        else if (asPart ? Rechord(Section, idea.Lane, range.From, range.To) : SetChords(Section, idea.Lane, range.From, range.To))
-            ShowSection();   // a new chord part's track to show
-        Changed();
-        Message = !idea.Whole ? $"{idea.Title}: {idea.Before} → {idea.After}, played by the chord parts there. Undo takes it back."
-                  : asPart ? $"{idea.Title}: {idea.After}, played by a Chords part under {idea.Before}. Undo takes it back."
-                  : $"{idea.Title}: {idea.After}, on the chord track under {idea.Before}, which stays as it is. Parts dropped in follow the chords; drag a chord's edges to stretch it. Undo takes it back.";
+        SetChords(idea.Lane, range.From, range.To);
+        return false;
+    }
+
+    /// <summary>What the message line says once an idea is kept.</summary>
+    string KeptText(Reharm idea, (long From, long To)? range, bool asPart)
+    {
+        if (asPart) return $"{idea.Title}: {idea.After}, played by a Chords part under {idea.Before}. Undo takes it back.";
+        if (idea.Whole)
+            return $"{idea.Title}: {idea.After}, on the chord track under {idea.Before}, which stays as it is. Parts dropped in follow the chords; drag a chord's edges to stretch it. Undo takes it back.";
+        // Parts changed by hand don't follow (chord parts are re-voiced where the chords changed): they're named, so it's no surprise.
+        var staying = range is { } r
+            ? Section.Layers.Where(l => l.Written.Length == 0 && l.Role != MidiRoles.Drums)
+                     .Where(l => l.Clips.Any(c => c.Pinned && c.Start < r.To && c.End > r.From && c.Role != MidiRoles.Drums &&
+                                                  (c.Role == MidiRoles.Other ? l.Role : c.Role) != MidiRoles.Chords))
+                     .Select(l => l.Name).Distinct().ToList()
+            : [];
+        var stays = staying.Count == 0 ? ""
+            : $" {string.Join(" and ", staying)} {(staying.Count == 1 ? "was" : "were")} changed by hand, so {(staying.Count == 1 ? "it stays as it is" : "they stay as they are")}: pick {(staying.Count == 1 ? "it" : "each")} and press Follow again to make {(staying.Count == 1 ? "it" : "them")} follow.";
+        return $"Kept {idea.Title}: {idea.Before} → {idea.After}, on the chord track: the parts follow it.{stays} Undo takes it back.";
     }
 
     /// <summary>A plain chord part playing <paramref name="chart"/> ("Dm7 | G7"), from the highlight or bar 1: chords to start from.</summary>
@@ -1772,22 +1867,27 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         return to > from ? (from, to) : null;
     }
 
-    /// <summary>The chord goes on the end as a new bar, played by the chord parts that reach the end.</summary>
+    /// <summary>
+    /// The chord goes on the end as a new bar, on the chord track: the chord parts that reach the end go round into it and
+    /// follow it, with as many notes and the rhythm they had.
+    /// </summary>
     internal void AddNextChord(ChordSymbol chord)
     {
         if (HasChordTrack) { AddToChordTrack(chord); return; }
         if (Section.Bars >= MaxBars) { Message = $"The timeline is full ({MaxBars} bars)."; return; }
         Remember();
         var end = Section.Length;
-        var lane = Harmony.Lane.Append(new TimedChord(end, Bar, chord)).ToList();
         SetBars(Section.Bars + 1);
         // Chord clips reaching the end go round into the new bar, so it's played with their rhythm.
         foreach (var l in Section.Layers.Where(l => l.Written.Length == 0))
             foreach (var c in l.Clips.Where(c => c.End == end && (c.Role == MidiRoles.Chords || c.Role == MidiRoles.Other && l.Role == MidiRoles.Chords)))
+            {
                 c.Length += Bar;
-        if (Rechord(Section, lane, end, end + Bar)) ShowSection();
+                l.Render();
+            }
+        SetChords([new TimedChord(end, Bar, chord)], end, end + Bar);
         Changed();
-        Message = $"{chord.Name} added as bar {Section.Bars}. Undo takes it back.";
+        Message = $"{chord.Name} added as bar {Section.Bars}, on the chord track: the chord parts go round into it and follow it. Undo takes it back.";
     }
 
     /// <summary>
@@ -2159,6 +2259,9 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         _undo.Clear();
         _redo.Clear();
         CanUndo = CanRedo = false;
+        _tryBefore = null;
+        TryingIdea = null;
+        ProposedChords = null;
         _session = Fresh();
         _session.Name = $"{name} sketch";
         Section.Bars = Math.Clamp(bars, 1, most ?? GrowBars);
@@ -2485,7 +2588,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     /// <summary>The section (or the arrangement) going round, every part that plays, with its sound.</summary>
     /// <summary>Plays the idea (or <paramref name="instead"/>); true when this is what's playing now, false when a newer
-    /// play or a stop came while the sound was being made, so a row only says "■ Stop" for what you hear.</summary>
+    /// play or a stop came while the sound was being made, so a row only shows Stop for what you hear.</summary>
     async Task<bool> PlayAsync(bool keepPlace = false, IReadOnlyList<MidiChannel>? instead = null, long? startAt = null)
     {
         StopBrowsing();
@@ -2693,35 +2796,15 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         Trying = new(row.Title, Layers.Count, start, length, placed);
     }
 
-    /// <summary>The idea with a reharmonisation in place, as Apply would leave it: the chord parts play the new chords, and parts written from the chords follow.</summary>
+    /// <summary>
+    /// The play button on the card of the idea being tried: it's in place (the chord parts play the new chords, and the parts follow
+    /// them), so this plays the idea as it is, from the bar before the change, or stops it. Another idea is tried first.
+    /// </summary>
     internal async Task PreviewIdea(ReharmRow row)
     {
-        if (row.IsPlaying) { StopPlaying(); return; }
-        StopPlaying();
-        var tried = PlaygroundSession.FromJson(_session.ToJson())!.Timeline;
-        if (RangeOf(row.Idea) is { } range) SetChords(tried, row.Idea.Lane, range.From, range.To);
-        // Parts follow the chords tried, as they would once it's kept.
-        foreach (var l in tried.Layers.Where(l => l.Written.Length == 0))
-        {
-            var touched = l.Clips.Where(c => !c.Pinned && !SameChords(c.Under, UnderOf(tried, l, c))).ToList();
-            if (touched.Count == 0) continue;
-            foreach (var c in touched) Refit(tried, l, c);
-            l.Render();
-        }
-        // What plays then (soloed parts only, when any are), with the written parts playing the idea's chords.
-        var channels = new List<MidiChannel>();
-        foreach (var l in PlaygroundSession.Audible(tried))
-        {
-            if (l.Written.Length == 0) { channels.Add(Channel(l.Name, l.Program, l.Notes, l.Volume)); continue; }
-            var notes = l.Clips.SelectMany(c =>
-            {
-                var under = LaneAt(row.Idea.Lane, c.Start, c.End);
-                return WithGroove(l, Written(l.Written, under, c.Length), under, c.Length).Select(n => n with { Start = n.Start + c.Start });
-            }).ToList();
-            channels.Add(Channel(l.Name, l.Program, notes, l.Volume));
-        }
-        if (ChordTrackChannel(tried) is { } chords) channels.Add(chords);
-        row.IsPlaying = await PlayAsync(instead: channels);
+        if (TryingIdea != row) { await TryIdea(row); return; }
+        if (_playing) { StopPlaying(); return; }
+        row.IsPlaying = await PlayAsync(startAt: Math.Max(0, _tryRange.From / Bar * Bar - Bar));
     }
 
     IEnumerable<MidiChannel> ChannelsOf(PlaygroundSection section) =>
@@ -3208,6 +3291,29 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
         }
     }
 
+    /// <summary>
+    /// Whether a note (placed at its time on the roll) goes with the chord under it, for snapping to the chords: one of its
+    /// own notes, the strongest fits (<see cref="NoteStrength"/>), whatever the colours show. Where no chord is heard
+    /// anything goes; null when there are no chords at all.
+    /// </summary>
+    public Func<NoteEvent, bool>? FitsChords => StrengthIn(owner.Harmony) is { } strength ? n => strength(n) is null or >= FitStrength.Strong : null;
+
+    /// <summary>Whether its notes can be snapped to the chords: anything but drums.</summary>
+    public bool CanSnap => !IsDrums;
+
+    /// <summary>
+    /// The key nearest <paramref name="note"/>'s that <paramref name="fits"/> says goes with the chords there, a semitone
+    /// at a time either way up to an octave, the way of <paramref name="prefer"/> first; its own key when none does.
+    /// </summary>
+    public static int NearestFit(NoteEvent note, Func<NoteEvent, bool> fits, int prefer)
+    {
+        var way = prefer < 0 ? -1 : 1;
+        for (var d = 0; d <= 12; d++)
+            foreach (var key in d == 0 ? [note.Key] : new[] { note.Key + way * d, note.Key - way * d })
+                if (key is >= 0 and <= 127 && fits(note with { Key = key })) return key;
+        return note.Key;
+    }
+
     /// <summary>Whether it's a bassline, whose strongest notes are the root and 5th (the colours' key says so).</summary>
     public bool IsBass => Role == MidiRoles.Bass;
 
@@ -3258,6 +3364,7 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
         OnPropertyChanged(nameof(StrengthOf));
         OnPropertyChanged(nameof(WouldBe));
         OnPropertyChanged(nameof(FitGuide));
+        OnPropertyChanged(nameof(FitsChords));
     }
 
     [RelayCommand] void Remove() => owner.RemoveClip(this);
@@ -3319,7 +3426,7 @@ public sealed partial class PlaygroundMatchRow(PlaygroundViewModel owner, Playgr
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(PreviewText))] bool _isPlaying;
     /// <summary>Its sound is being made, before it plays.</summary>
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(PreviewText))] bool _isPreparing;
-    public string PreviewText => IsPreparing ? "Getting it ready…" : IsPlaying ? "■ Stop" : "▶ With the idea";
+    public string PreviewText => IsPreparing ? "Getting it ready…" : IsPlaying ? "Stop" : "With the idea";
     [RelayCommand] void Add() => owner.AddMatch(this);
     /// <summary>What Add does: a new track, or (with a highlight in a clip) swapping those bars of it.</summary>
     public string AddText { get; } = owner.SwapTarget is null ? "Add" : "Swap in";

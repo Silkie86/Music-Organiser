@@ -189,10 +189,7 @@
                         <Grid ColumnDefinitions="Auto,*,Auto,Auto" RowDefinitions="Auto,Auto" Margin="0,3">
                             <Button Command="{Binding PlayCommand}" Padding="9,5" Margin="0,0,10,0" VerticalAlignment="Center"
                                     ToolTip.Tip="Listen (with a stand-in sound)">
-                                <Panel>
-                                    <TextBlock Text="▶" IsVisible="{Binding !IsPlaying}" />
-                                    <TextBlock Text="■" IsVisible="{Binding IsPlaying}" />
-                                </Panel>
+                                <views:PlayIcon IsPlaying="{Binding IsPlaying}" />
                             </Button>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
                                 <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
