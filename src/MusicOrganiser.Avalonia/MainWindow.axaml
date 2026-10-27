@@ -135,6 +135,17 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
 
+                <!-- The drive the library is on is nearly full (F12 note, 27 Oct): a sign until there's room again. It opens Settings › General. -->
+                <Button DockPanel.Dock="Bottom" Classes="dawLight flat" HorizontalAlignment="Center" Margin="0,0,0,6"
+                        IsVisible="{Binding Settings.AppFiles.IsLow}" Command="{Binding Settings.AppFiles.ShowCommand}"
+                        ToolTip.Tip="{Binding Settings.AppFiles.RailTip}">
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <Path Data="M6,1 L11.5,11 L0.5,11 Z M6,4.5 L6,7.5 M6,9.3 L6,9.4" Stroke="{StaticResource WarningBrush}" StrokeThickness="1.4"
+                              StrokeLineCap="Round" StrokeJoin="Round" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding Settings.AppFiles.RailText}" FontSize="10.5" VerticalAlignment="Center" Foreground="{StaticResource WarningBrush}" />
+                    </StackPanel>
+                </Button>
+
                 <ListBox ItemsSource="{Binding Nav}" SelectedItem="{Binding SelectedNav}" Background="Transparent" Classes="nav"
                          ScrollViewer.VerticalScrollBarVisibility="Disabled">
                     <ListBox.ItemsPanel>

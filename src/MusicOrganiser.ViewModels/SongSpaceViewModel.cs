@@ -270,7 +270,8 @@ public sealed partial class SongSpaceViewModel : ObservableObject
 }
 
 /// <summary>A part of a song's room (saves, autosaves …), for the bar and its legend.</summary>
-public sealed record SpacePart(string Name, long Bytes, string Colour, double Share = 0)
+/// <param name="What">What the part holds, for the app's own files on Settings ("Projects, plugins, samples, tags and ratings").</param>
+public sealed record SpacePart(string Name, long Bytes, string Colour, double Share = 0, string What = "")
 {
     public string SizeText => DiskSpace.Text(Bytes);
 }

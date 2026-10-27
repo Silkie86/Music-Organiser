@@ -8,13 +8,21 @@ public sealed record MovedFolder(string From, string To, string OldCopy, long By
     /// <summary>The plugin it belongs to (its name key), and what it holds.</summary>
     public string Key { get; init; } = "";
     public SpaceKind Kind { get; init; } = SpaceKind.Sounds;
+    /// <summary>
+    /// The other plugins whose folder it also was when it moved (a maker's folder: Toontrack's is EZkeys 2's and Superior
+    /// Drummer 3's), so their Space tabs show it moved too. Empty for moves made before this was kept.
+    /// </summary>
+    public IReadOnlyList<string> SharedWith { get; init; } = [];
+    /// <summary>Whether the plugin with this name key had it: the one it was moved from, or one sharing it.</summary>
+    public bool Belongs(string key) => key.Length > 0 && (Key == key || SharedWith.Contains(key));
     /// <summary>Whether the old copy is still beside the link, waiting for you to delete it.</summary>
     public bool HasOldCopy => Directory.Exists(OldCopy);
 }
 
 /// <summary>
 /// A folder left behind for you to delete once the plugins open fine: the old place of the folder the moved folders live
-/// in, after it moved to another drive, or the folder an update made where the link was, once its files joined the moved copy.
+/// in, after it moved to another drive, or the folder an update made where the link was (or a second copy a later move
+/// made there), once its files joined the moved copy.
 /// </summary>
 public sealed record OldHome(string Path, long Bytes, string Note = "its old place");
 
@@ -32,6 +40,9 @@ public static class FolderMove
     /// <summary>The folder a plugin update made in the link's place, once it's set aside and the link is back.</summary>
     public const string UpdateSuffix = " (after update)";
 
+    /// <summary>The second copy a later move of the folder around it made, once it's set aside and the link is back.</summary>
+    public const string SecondSuffix = " (second copy)";
+
     /// <summary>Room left over on the drive after the copy, so the move never fills it.</summary>
     public const long Headroom = 2L << 30;
 
@@ -45,16 +56,32 @@ public static class FolderMove
     /// </summary>
     public static bool IsLink(string path) => DiskSpace.IsLink(new DirectoryInfo(path));
 
+    /// <summary>
+    /// The moved folder around <paramref name="path"/> (Native Instruments, moved, around Reaktor 6), or null when none
+    /// is: then the path is where it looks, on this drive. Only the app's own moves count; a link the system made (a
+    /// Mac's /var) isn't a move.
+    /// </summary>
+    public static string? InsideMoved(string path, IReadOnlyList<MovedFolder> moved)
+    {
+        path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        return moved.Select(m => m.From)
+                    .Where(f => !f.Equals(path, StringComparison.OrdinalIgnoreCase) && DiskSpace.IsInside(path, f))
+                    .OrderBy(f => f.Length).FirstOrDefault(IsLink);
+    }
+
     /// <summary>Why the folder can't move to <paramref name="destination"/>, or "" when it can.</summary>
     /// <param name="driveOf">Which drive a path is on (tests stand in a second drive with a folder).</param>
     /// <param name="ct">Stops the look through the folder for OneDrive files (a big folder takes a while).</param>
+    /// <param name="moved">The folders moved already, so one inside them isn't moved again.</param>
     public static string Problem(string from, string destination, long bytes, Func<string, long>? freeSpace = null, Func<string, string>? driveOf = null,
-                                 CancellationToken ct = default)
+                                 CancellationToken ct = default, IReadOnlyList<MovedFolder>? moved = null)
     {
         from = Path.TrimEndingDirectorySeparator(Path.GetFullPath(from));
         destination = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destination));
         if (!Directory.Exists(from)) return "The folder isn't there any more.";
         if (IsLink(from)) return "It's moved already: it points to another place.";
+        if (InsideMoved(from, moved ?? []) is { } outer)
+            return $"It's inside {Path.GetFileName(outer)}, which is on another drive already, so moving it frees nothing here.";
         if (Directory.Exists(from + OldSuffix)) return $"There's already a folder called {Path.GetFileName(from)}{OldSuffix} beside it.";
         if (DiskSpace.IsInside(destination, from)) return "That folder is inside the one being moved.";
         driveOf ??= DriveOf;
@@ -101,11 +128,15 @@ public static class FolderMove
     /// copy. If anything goes wrong before the swap, the half-made copy is removed and nothing else has changed.
     /// </summary>
     /// <param name="progress">Bytes copied so far, of the whole.</param>
+    /// <param name="alreadyMoved">The folders moved before: one around this one stops it, and old copies inside it stay behind.</param>
     public static MovedFolder Move(string from, string destination, long bytes, IProgress<long>? progress = null, CancellationToken ct = default,
-                                   Func<string, string>? driveOf = null)
+                                   Func<string, string>? driveOf = null, IReadOnlyList<MovedFolder>? alreadyMoved = null)
     {
         from = Path.TrimEndingDirectorySeparator(Path.GetFullPath(from));
-        var problem = Problem(from, destination, bytes, driveOf: driveOf, ct: ct);
+        // The old copies of folders moved from inside it before (Reaktor 6's inside Native Instruments) aren't copied:
+        // they stay in its own old copy, and go when that does.
+        var leaveOut = (alreadyMoved ?? []).Where(m => DiskSpace.IsInside(m.OldCopy, from)).Select(m => m.OldCopy).ToList();
+        var problem = Problem(from, destination, bytes, driveOf: driveOf, ct: ct, moved: alreadyMoved);
         if (problem.Length > 0) throw new IOException(problem);
         var target = Target(from, destination);
         // Find out before copying whether Windows lets the folder be renamed, rather than after an hour of copying.
@@ -113,7 +144,7 @@ public static class FolderMove
         if (check.Length > 0 && check != NeedsAdmin) throw new IOException(check);
         try
         {
-            Copy(from, target, progress, ct);
+            Walk(from, target, onlyNewer: false, progress, ct, leaveOut);
         }
         catch
         {
@@ -172,8 +203,10 @@ public static class FolderMove
     /// <summary>Copies the files that are new, or newer than the ones in <paramref name="to"/>, into it. Nothing is removed.</summary>
     static void Freshen(string from, string to, IProgress<long>? progress, CancellationToken ct) => Walk(from, to, onlyNewer: true, progress, ct);
 
-    static void Walk(string from, string to, bool onlyNewer, IProgress<long>? progress, CancellationToken ct)
+    static void Walk(string from, string to, bool onlyNewer, IProgress<long>? progress, CancellationToken ct,
+                     IReadOnlyCollection<string>? leaveOut = null)
     {
+        var skip = (leaveOut ?? []).Select(p => Path.TrimEndingDirectorySeparator(Path.GetFullPath(p))).ToHashSet(StringComparer.OrdinalIgnoreCase);
         long done = 0;
         var options = new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = false };
         var folders = new Stack<(string From, string To)>();
@@ -184,6 +217,7 @@ public static class FolderMove
             foreach (var entry in new DirectoryInfo(folder.From).EnumerateFileSystemInfos("*", options))
             {
                 ct.ThrowIfCancellationRequested();
+                if (skip.Contains(entry.FullName)) continue;
                 var copy = Path.Combine(folder.To, entry.Name);
                 if (entry.LinkTarget is { } target)
                 {
@@ -519,33 +553,91 @@ public static class FolderMove
 
     /// <summary>
     /// The moved folders a plugin update put a real folder back in place of (some installers delete the folder and make
-    /// it again): the plugin writes on this drive again, and the copy on the other drive is left out of date.
+    /// it again): the plugin writes on this drive again, and the copy on the other drive is left out of date. A folder
+    /// inside one moved later isn't one of these: see <see cref="Doubled"/>.
     /// </summary>
     public static IReadOnlyList<MovedFolder> Replaced(IReadOnlyList<MovedFolder> moved) =>
-        moved.Where(m => Directory.Exists(m.From) && !IsLink(m.From) && Directory.Exists(m.To)).ToList();
+        moved.Where(m => IsRealAgain(m) && InsideMoved(m.From, moved) is null).ToList();
 
     /// <summary>
-    /// After an update replaced the link with a real folder: the folder's new and newer files join the copy on the other
-    /// drive, then it's set aside as "… (after update)" and the link goes back. Returns the folder set aside, to delete
-    /// once the plugin opens fine.
+    /// The moved folders that were inside a folder moved after them, before links inside a folder were kept as links (F12
+    /// note, 27 Oct: Reaktor 6 and Reaktor5, then Native Instruments around them). That move copied what their links
+    /// pointed at, so the other drive has two copies: the plugin now uses the one inside the later move, and the folder's
+    /// own copy is left out of date. Each comes with the moved folder around it.
     /// </summary>
-    public static OldHome LinkAgain(MovedFolder moved, long bytes, IProgress<long>? progress = null, CancellationToken ct = default)
+    public static IReadOnlyList<(MovedFolder Moved, string Around)> Doubled(IReadOnlyList<MovedFolder> moved) =>
+        moved.Where(IsRealAgain).Select(m => (Moved: m, Around: InsideMoved(m.From, moved))).Where(x => x.Around is not null)
+             .Select(x => (x.Moved, x.Around!)).ToList();
+
+    static bool IsRealAgain(MovedFolder m) => Directory.Exists(m.From) && !IsLink(m.From) && Directory.Exists(m.To);
+
+    /// <summary>
+    /// Where a path inside a moved folder really is (Reaktor 6's second copy, inside Native Instruments, is on I:), so what
+    /// is set aside in there goes to that drive's Recycle Bin rather than being copied back to this one to be binned.
+    /// </summary>
+    public static string RealPlace(string path, IReadOnlyList<MovedFolder> moved)
+    {
+        if (InsideMoved(path, moved) is not { } outer) return path;
+        var m = moved.First(m => m.From.Equals(outer, StringComparison.OrdinalIgnoreCase));
+        return Path.Join(m.To, Path.GetRelativePath(outer, Path.GetFullPath(path)));
+    }
+
+    /// <summary>
+    /// Fills in the other plugins each moved folder was shared with, for moves made before that was kept (F12 note, 27 Oct:
+    /// EZkeys 2 still showed Toontrack on C: after it moved). Their sizes from before the move still list the folder, so
+    /// those plugins are also the ones to measure again. Each folder is only looked at once: it keeps what's found.
+    /// </summary>
+    public static (IReadOnlyList<MovedFolder> Moved, IReadOnlyList<string> Stale) FindSharers(IReadOnlyList<MovedFolder> moved,
+                                                                                            IReadOnlyDictionary<string, PluginSpaceInfo> spaces)
+    {
+        var stale = new List<string>();
+        var now = moved.Select(m =>
+        {
+            if (m.SharedWith.Count > 0) return m;
+            var sharers = spaces.Values.Where(s => s.Key != m.Key && s.Folders.Any(f => f.Path.Equals(m.From, StringComparison.OrdinalIgnoreCase)))
+                                .Select(s => s.Key).ToList();
+            stale.AddRange(sharers);
+            return sharers.Count > 0 ? m with { SharedWith = sharers } : m;
+        }).ToList();
+        return (now, stale.Distinct().ToList());
+    }
+
+    /// <summary>
+    /// After an update replaced the link with a real folder (or a later move left a second copy where the link was): the
+    /// folder's new and newer files join the copy on the other drive, then it's set aside as "… (after update)" (or
+    /// "… (second copy)") and the link goes back. Returns the folder set aside, to delete once the plugin opens fine.
+    /// </summary>
+    public static OldHome LinkAgain(MovedFolder moved, long bytes, IProgress<long>? progress = null, CancellationToken ct = default,
+                                    bool second = false)
     {
         if (!Directory.Exists(moved.To)) throw new IOException($"{moved.To} isn't there any more.");
-        var aside = moved.From + UpdateSuffix;
-        for (var n = 2; Directory.Exists(aside); n++) aside = $"{moved.From} (after update {n})";
+        var suffix = second ? SecondSuffix : UpdateSuffix;
+        var aside = moved.From + suffix;
+        for (var n = 2; Directory.Exists(aside); n++) aside = $"{moved.From}{suffix[..^1]} {n})";
         var check = CheckRename(moved.From);
         if (check.Length > 0 && check != NeedsAdmin) throw new IOException(check);
         Freshen(moved.From, moved.To, progress, ct);
         var swap = Swap(moved.From, moved.To, aside);
         if (swap.Length > 0) throw new IOException(swap);
-        return new OldHome(aside, bytes, "left by an update");
+        return new OldHome(aside, bytes, second ? "a second copy" : "left by an update");
     }
 
-    /// <summary>Points each link at its new place: the ones Windows guards with one administrator question for all.</summary>
+    /// <summary>
+    /// Points each link at its new place: the ones Windows guards with one administrator question for all. Outer links go
+    /// first: a moved folder inside another (Reaktor 6 in Native Instruments) is reached through the outer link, so it's
+    /// pointed at the new place only once the outer one is, or it would change the link left in the old place.
+    /// </summary>
     static IReadOnlyDictionary<string, string> RelinkAll(IReadOnlyList<(string At, string Target)> links)
     {
         var problems = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        static bool Around(string outer, string inner) => !outer.Equals(inner, StringComparison.OrdinalIgnoreCase) && DiskSpace.IsInside(inner, outer);
+        foreach (var level in links.GroupBy(l => links.Count(o => Around(o.At, l.At))).OrderBy(g => g.Key))
+            RelinkLevel(level.ToList(), problems);
+        return problems;
+    }
+
+    static void RelinkLevel(IReadOnlyList<(string At, string Target)> links, Dictionary<string, string> problems)
+    {
         var guarded = new List<(string At, string Target)>();
         foreach (var (at, target) in links)
         {
@@ -553,7 +645,7 @@ public static class FolderMove
             if (problem == NeedsAdmin) guarded.Add((at, target));
             else if (problem.Length > 0) problems[at] = problem;
         }
-        if (guarded.Count == 0) return problems;
+        if (guarded.Count == 0) return;
         var list = Path.Combine(Path.GetTempPath(), $"mo-relink-{Guid.NewGuid():N}.txt");
         var result = list + ".result";
         try
@@ -575,7 +667,6 @@ public static class FolderMove
         {
             try { File.Delete(list); File.Delete(result); } catch (IOException) { }
         }
-        return problems;
     }
 
     /// <summary>Swaps the link at <paramref name="at"/> for one to <paramref name="target"/>. Never touches a real folder.</summary>

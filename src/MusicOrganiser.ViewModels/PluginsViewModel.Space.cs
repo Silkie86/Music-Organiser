@@ -435,30 +435,84 @@ public sealed partial class PluginsViewModel
     [ObservableProperty] string _spareSizeText = "";
     [ObservableProperty] string _spareTitle = "";
     [ObservableProperty] string _spareNote = "";
+    /// <summary>Each format the spare copies are in, biggest first: one press reviews just that format (F12 note, 27 Oct).</summary>
+    [ObservableProperty] IReadOnlyList<SpareFormat> _spareFormats = [];
+    /// <summary>
+    /// Spare copies haven't been looked for yet. They're found when every plugin is measured, so until then the page said
+    /// nothing about them, and nothing said what to do (Solomon's F12 note, 27 Oct: "its not obvious what you have to do to
+    /// see that come up").
+    /// </summary>
+    [ObservableProperty] bool _sparesUnknown;
 
     /// <summary>The spare copies line: plugin files in formats none of your projects use.</summary>
-    void BuildSpares(IReadOnlyList<SpareCopy> spares)
+    void BuildSpares(IReadOnlyList<SpareCopy> spares, bool lookedFor)
     {
         _spares = spares;
         HasSpares = spares.Count > 0;
+        SparesUnknown = !lookedFor;
         SpareSizeText = DiskSpace.Text(spares.Sum(c => c.Bytes));
         SpareTitle = spares.Count == 1 ? "1 spare plugin copy" : $"{spares.Count} spare plugin copies";
-        var formats = spares.GroupBy(c => c.Format).OrderByDescending(g => g.Count()).Select(g => $"{g.Count()} {g.Key}");
-        SpareNote = $"{string.Join(", ", formats)}: copies in a format none of your projects use. The format they use stays.";
+        SpareFormats = spares.GroupBy(c => c.Format, StringComparer.OrdinalIgnoreCase)
+                             .Select(g => new SpareFormat(g.Key, g.Count(), g.Sum(c => c.Bytes), this))
+                             .OrderByDescending(f => f.Bytes).ThenBy(f => f.Format, StringComparer.OrdinalIgnoreCase).ToList();
+        SpareNote = "Copies in a format none of your projects use; the format they use stays. Press a format to review just those.";
     }
 
-    /// <summary>Opens the Keep or Delete card for the spare copies, every one ticked.</summary>
+    /// <summary>The stored spare copies again, after a measure that changed no size (the rows stay as they are).</summary>
+    public async Task RefreshSparesAsync()
+    {
+        var (spares, lookedFor) = await UiWork.Run(() => (StillThere(_db.SpareCopyList()), _db.SpareCopiesLookedFor()));
+        BuildSpares(spares, lookedFor);
+    }
+
+    static IReadOnlyList<SpareCopy> StillThere(IReadOnlyList<SpareCopy> spares) =>
+        spares.Where(c => File.Exists(c.Path) || Directory.Exists(c.Path)).ToList();
+
+    /// <summary>Look now: finds the spare copies on its own, without measuring every plugin.</summary>
     [RelayCommand]
-    void ReviewSpares()
+    async Task LookForSpares()
+    {
+        using var stop = new CancellationTokenSource();
+        var activity = _main.Activities.Start("Looking for spare plugin copies", "Plugin files in formats none of your projects use", cancel: stop.Cancel);
+        try
+        {
+            var spares = await Task.Run(() => StillThere(new SpaceMeter(_db).LookForSpareCopies(stop.Token)), stop.Token);
+            BuildSpares(spares, lookedFor: true);
+            if (spares.Count == 0) activity.Finish("No spare plugin copies", "Every plugin file is in a format your projects use.");
+            else activity.Finish($"Found {SpareTitle}", $"{SpareSizeText} you could free: Review… shows each one.");
+        }
+        catch (OperationCanceledException)
+        {
+            activity.Stop("Stopped looking for spare copies", "Press Look now to start again.");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            activity.Fail("Couldn't look for spare copies", e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Opens the Keep or Delete card for the spare copies: every one ticked, or with a <paramref name="format"/> only that
+    /// format's. The card's format ticks take a whole format on or off at once.
+    /// </summary>
+    [RelayCommand]
+    void ReviewSpares(string? format)
     {
         if (_spares.Count == 0) return;
+        var order = SpareFormats.Select(f => f.Format).ToList();
+        var items = _spares.OrderBy(c => order.FindIndex(f => f.Equals(c.Format, StringComparison.OrdinalIgnoreCase)))
+                           .ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+                           .Select(c => new CleanupItem(new SpaceFolder(c.Path, SpaceKind.Program, c.Bytes, [], false), "",
+                                                        ticked: format is null || c.Format.Equals(format, StringComparison.OrdinalIgnoreCase),
+                                                        label: $"{c.Name} · {c.Format}", detail: c.Why) { Group = c.Format })
+                           .ToList();
         var card = new SpaceCard(this)
         {
-            Title = "Remove spare plugin copies?",
-            Intro = "Each is a plugin in a format none of your projects use; the format they use stays installed. They go to the Recycle Bin." +
+            Title = format is null ? "Remove spare plugin copies?" : $"Remove the spare {format} copies?",
+            Intro = "Each is a plugin in a format none of your projects use; the format they use stays installed. Tick a whole format, or one at a time. " +
+                    "They go to the Recycle Bin." +
                     (OperatingSystem.IsWindows() ? " They're in Program Files, so Windows asks once for administrator rights." : ""),
-            Items = _spares.Select(c => new CleanupItem(new SpaceFolder(c.Path, SpaceKind.Program, c.Bytes, [], false), "", ticked: true,
-                                                        label: $"{c.Name} · {c.Format}", detail: c.Why)).ToList(),
+            Items = items,
         };
         card.Confirm = async () =>
         {
@@ -536,6 +590,8 @@ public sealed partial class CleanupItem : ObservableObject
     }
 
     readonly string? _label;
+    /// <summary>The group it's ticked with on the card (a spare copy's format), or "".</summary>
+    public string Group { get; init; } = "";
     public SpaceFolder Folder { get; }
     public string Why { get; }
     /// <summary>Why it can go ("Your projects use its VST3 (412 projects); none use this VST2.").</summary>
@@ -573,8 +629,14 @@ public sealed partial class SpaceCard(PluginsViewModel owner) : ObservableObject
         {
             _items = value;
             foreach (var i in value) i.Card = this;
+            Groups = value.Where(i => i.Group.Length > 0).GroupBy(i => i.Group, StringComparer.OrdinalIgnoreCase)
+                          .Select(g => new CleanupGroup(g.Key, g.ToList())).ToList();
         }
     }
+
+    /// <summary>The items' groups (the spare copies' formats), each ticked or unticked as a whole.</summary>
+    public IReadOnlyList<CleanupGroup> Groups { get; private set; } = [];
+    public bool HasGroups => Groups.Count > 0;
 
     /// <summary>For Uninstall: the uninstallers that may be this plugin's, best first, and the one picked.</summary>
     public IReadOnlyList<Uninstaller> Uninstallers { get; set; } = [];
@@ -608,6 +670,7 @@ public sealed partial class SpaceCard(PluginsViewModel owner) : ObservableObject
         var bytes = Items.Where(i => i.IsTicked).Sum(i => i.Folder.Bytes);
         ConfirmText = bytes > 0 ? $"Delete {DiskSpace.Text(bytes)}" : "Delete";
         CanConfirm = bytes > 0;
+        foreach (var g in Groups) g.Sync();
     }
 
     /// <summary>A card whose button always reads the same ("Move 4.5 GB"), ready to press.</summary>
@@ -629,4 +692,68 @@ public sealed partial class SpaceCard(PluginsViewModel owner) : ObservableObject
     Task Run() => Confirm?.Invoke() ?? Task.CompletedTask;
 
     bool CanRun() => CanConfirm && !Busy;
+}
+
+/// <summary>One format of the spare copies, on the line over the list: pressing it reviews just those.</summary>
+public sealed partial class SpareFormat(string format, int count, long bytes, PluginsViewModel owner)
+{
+    public string Format => format;
+    public long Bytes => bytes;
+    /// <summary>"AAX · 90 · 1.2 GB".</summary>
+    public string Text => $"{format} · {count} · {DiskSpace.Text(bytes)}";
+    public string Tip => $"Review the {count} spare {format} {(count == 1 ? "copy" : "copies")}, with only those ticked";
+
+    [RelayCommand] void Review() => owner.ReviewSparesCommand.Execute(format);
+}
+
+/// <summary>
+/// A group of a Keep or Delete card's items (the spare copies in one format) with one tick for them all: ticked when they
+/// all are, unticked when none are, and in between otherwise (Solomon's F12 note, 27 Oct: "option select spare copies by
+/// plugin type so if theres a type you definatelty dont use you can delete them easily").
+/// </summary>
+public sealed partial class CleanupGroup : ObservableObject
+{
+    public CleanupGroup(string name, IReadOnlyList<CleanupItem> items)
+    {
+        Name = name;
+        Items = items;
+        _isTicked = State();
+    }
+
+    public string Name { get; }
+    public IReadOnlyList<CleanupItem> Items { get; }
+    /// <summary>"AAX · 90 · 1.2 GB".</summary>
+    public string Text => $"{Name} · {Items.Count} · {DiskSpace.Text(Items.Sum(i => i.Folder.Bytes))}";
+    public string Tip => $"Tick or untick all {Items.Count} {Name} at once";
+
+    bool? _isTicked;
+    bool _setting;
+
+    /// <summary>True when every one is ticked, false when none is, null for some. Setting it ticks or unticks them all.</summary>
+    public bool? IsTicked
+    {
+        get => _isTicked;
+        set
+        {
+            if (value is not { } on || _setting) return;
+            _setting = true;
+            try
+            {
+                foreach (var i in Items.Where(i => i.CanTick)) i.IsTicked = on;
+            }
+            finally { _setting = false; }
+            Sync();
+        }
+    }
+
+    bool? State()
+    {
+        var ticked = Items.Count(i => i.IsTicked);
+        return ticked == 0 ? false : ticked == Items.Count(i => i.CanTick) ? true : null;
+    }
+
+    internal void Sync()
+    {
+        if (!_setting) SetProperty(ref _isTicked, State(), nameof(IsTicked));
+    }
 }
