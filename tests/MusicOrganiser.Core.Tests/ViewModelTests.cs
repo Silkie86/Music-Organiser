@@ -1610,6 +1610,22 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void The_galaxys_star_brightness_is_kept_within_its_range_for_next_time()
+    {
+        // Solomon, 2026-10-27: "should be able to increase brightness of stars"
+        var lab = new MainViewModel(_db, _sounds).Sounds;
+        Assert.Equal(1, lab.GalaxyBrightness);
+        Assert.Equal("100%", lab.GalaxyBrightnessText);
+        lab.GalaxyBrightness = 2.5;
+        Assert.Equal("250%", lab.GalaxyBrightnessText);
+        Assert.Equal(2.5, new MainViewModel(_db, _sounds).Sounds.GalaxyBrightness);
+        _db.SetSetting(SoundsViewModel.GalaxyBrightnessKey, "900");   // from a later version with more room, say
+        Assert.Equal(SoundsViewModel.BrightestStars, new MainViewModel(_db, _sounds).Sounds.GalaxyBrightness);
+        lab.ResetGalaxyBrightnessCommand.Execute(null);
+        Assert.Equal(1, new MainViewModel(_db, _sounds).Sounds.GalaxyBrightness);
+    }
+
+    [Fact]
     public async Task A_folder_can_be_added_while_the_last_one_added_is_still_being_scanned()
     {
         var ui = (HeadlessUi)Ui.Current;

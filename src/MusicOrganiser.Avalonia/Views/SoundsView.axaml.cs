@@ -30,6 +30,10 @@ public partial class SoundsView : UserControl, IShortcutPage
         TileList.AddHandler(KeyUpEvent, OnTilesKeyUp, RoutingStrategies.Bubble, handledEventsToo: true);
         HistoryList.AddHandler(PointerReleasedEvent, OnHistoryClicked, RoutingStrategies.Bubble, handledEventsToo: true);
         HistoryList.AddHandler(PointerPressedEvent, OnPressCounted, RoutingStrategies.Tunnel, handledEventsToo: true);
+        // Rediscover: on the way down, so a click on a row's edge (the list's own padding round each row) plays it too.
+        SuggestionList.AddHandler(PointerPressedEvent, OnSuggestionPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
+        SuggestionList.AddHandler(KeyDownEvent, OnSuggestionsKeyDown, RoutingStrategies.Tunnel);
+        SuggestionList.AddHandler(KeyUpEvent, OnSuggestionsKeyUp, RoutingStrategies.Bubble, handledEventsToo: true);
     }
 
     void OnGridDoubleTapped(object? sender, TappedEventArgs e)
@@ -173,18 +177,64 @@ public partial class SoundsView : UserControl, IShortcutPage
 
     void OnTileDoubleTapped(object? sender, TappedEventArgs e) => Vm?.AuditionCommand.Execute(null);
 
-    // A Rediscover row plays like a tile: a click anywhere but its buttons (they take their own clicks).
+    // A Rediscover row plays like a tile: a click anywhere but its buttons (they take their own clicks), its edges too.
+    // They're the list's padding round the row, which a handler on the row itself never heard (Solomon, 2026-10-27:
+    // "sometimes i click and the sound does[n't] play"). On the waveform it plays from that point.
     void OnSuggestionPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (Vm is not { } vm || sender is not Control { DataContext: Suggestion row }) return;
-        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed || OnButton(e.Source)) return;
+        if (Vm is not { } vm || e.Source is not Visual source || source.FindAncestorOfType<ListBoxItem>(true) is not { DataContext: Suggestion row } item) return;
+        var props = e.GetCurrentPoint(this).Properties;
+        if (props.IsRightButtonPressed) vm.Selected = row.Sound;
+        if (!props.IsLeftButtonPressed || OnButton(source)) return;
         vm.Selected = row.Sound;
-        if (e.ClickCount == 1) vm.PlayClicked();
+        if (e.ClickCount != 1) return;
+        if (item.GetVisualDescendants().OfType<MiniWave>().FirstOrDefault() is { } wave && row.Sound.Seconds > 0 &&
+            e.GetPosition(wave) is var at && new Rect(wave.Bounds.Size).Contains(at))
+            vm.SeekCommand.Execute(Math.Clamp(at.X / wave.Bounds.Width, 0, 1) * row.Sound.Seconds);
+        else vm.PlayClicked();
     }
 
     void OnSuggestionDoubleTapped(object? sender, TappedEventArgs e)
     {
-        if (!OnButton(e.Source)) Vm?.AuditionCommand.Execute(null);
+        if (e.Source is Visual source && !OnButton(source) && source.FindAncestorOfType<ListBoxItem>(true) is not null)
+            Vm?.AuditionCommand.Execute(null);
+    }
+
+    // Up and Down go along the suggestions, as in the Library's list: each one landed on plays with Autoplay on, a key held
+    // down waits for each, and the one you let go on plays.
+    void OnSuggestionsKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (Vm is not { } vm || e.KeyModifiers != KeyModifiers.None) return;
+        var rows = vm.Rediscover.Suggestions;
+        if (rows.Count == 0) return;
+        var at = -1;
+        for (var i = 0; i < rows.Count; i++) if (rows[i].Sound == vm.Selected) { at = i; break; }
+        var next = e.Key switch
+        {
+            Key.Down => at + 1,
+            Key.Up => at < 0 ? 0 : at - 1,
+            Key.PageDown => at + 8,
+            Key.PageUp => at - 8,
+            Key.Home => 0,
+            Key.End => rows.Count - 1,
+            _ => int.MinValue,
+        };
+        if (next == int.MinValue) return;
+        e.Handled = true;
+        next = Math.Clamp(next, 0, rows.Count - 1);
+        if (next == at || !vm.MayStep(Held(e))) return;
+        vm.Selected = rows[next].Sound;
+        SuggestionList.SelectedIndex = next;
+        SuggestionList.ScrollIntoView(next);
+        (SuggestionList.ContainerFromIndex(next) as ListBoxItem)?.Focus();
+        vm.PlayPassing();
+    }
+
+    void OnSuggestionsKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == _held) _held = null;
+        if (e.KeyModifiers == KeyModifiers.None && e.Key is Key.Up or Key.Down or Key.PageUp or Key.PageDown or Key.Home or Key.End)
+            Vm?.PlayPicked();
     }
 
     static bool OnButton(object? source) => source is Visual v && v.FindAncestorOfType<Button>(includeSelf: true) is not null;

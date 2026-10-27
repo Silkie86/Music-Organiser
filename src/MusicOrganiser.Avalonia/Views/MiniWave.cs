@@ -19,6 +19,8 @@ public sealed class MiniWave : Control
     {
         var w = Bounds.Width;
         var h = Bounds.Height;
+        // See-through, but there: the pointer finds it between the bars (a click on a waveform plays from that point).
+        context.FillRectangle(Brushes.Transparent, new Rect(Bounds.Size));
         if (Peaks is not { Length: > 0 } peaks || w < 2 || h < 2) return;
         var brush = Fill ?? Brushes.Gray;
         // One bar every 3 pixels, each the loudest peak it covers.

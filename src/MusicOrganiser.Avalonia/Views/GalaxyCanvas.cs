@@ -47,6 +47,9 @@ public sealed class GalaxyCanvas : Control
     public static readonly StyledProperty<ICommand?> PickCommandProperty = AvaloniaProperty.Register<GalaxyCanvas, ICommand?>(nameof(PickCommand));
     public static readonly StyledProperty<ICommand?> SweepEndedCommandProperty = AvaloniaProperty.Register<GalaxyCanvas, ICommand?>(nameof(SweepEndedCommand));
     public static readonly StyledProperty<ICommand?> AheadCommandProperty = AvaloniaProperty.Register<GalaxyCanvas, ICommand?>(nameof(AheadCommand));
+    /// <summary>How bright the stars are, 1 as measured (the brightness button beside the galaxy, or [ and ]).</summary>
+    public static readonly StyledProperty<double> BrightnessProperty =
+        AvaloniaProperty.Register<GalaxyCanvas, double>(nameof(Brightness), 1, defaultBindingMode: global::Avalonia.Data.BindingMode.TwoWay);
 
     public IReadOnlyList<GalaxyStar>? Stars { get => GetValue(StarsProperty); set => SetValue(StarsProperty, value); }
     public IReadOnlyList<GalaxyRegion>? Regions { get => GetValue(RegionsProperty); set => SetValue(RegionsProperty, value); }
@@ -59,8 +62,9 @@ public sealed class GalaxyCanvas : Control
     public ICommand? SweepEndedCommand { get => GetValue(SweepEndedCommandProperty); set => SetValue(SweepEndedCommandProperty, value); }
     /// <summary>The sounds the sweeping mouse is heading for (a list of <see cref="Sound"/>), nearest first, so their files can be read ahead.</summary>
     public ICommand? AheadCommand { get => GetValue(AheadCommandProperty); set => SetValue(AheadCommandProperty, value); }
+    public double Brightness { get => GetValue(BrightnessProperty); set => SetValue(BrightnessProperty, value); }
 
-    static GalaxyCanvas() => AffectsRender<GalaxyCanvas>(StarsProperty, RegionsProperty, TrailProperty, ConstellationProperty, SelectedProperty);
+    static GalaxyCanvas() => AffectsRender<GalaxyCanvas>(StarsProperty, RegionsProperty, TrailProperty, ConstellationProperty, SelectedProperty, BrightnessProperty);
 
     // The camera: the map point in the middle of the view, and how far in (1 = the whole galaxy fits). The t-values
     // are where it's gliding to; with an anchor, the map point under the mouse stays put while it glides.
@@ -133,6 +137,7 @@ public sealed class GalaxyCanvas : Control
         }
         else if (change.Property == SelectedProperty && Selected is { } s && _byId.TryGetValue(s.Id, out var star) && !OnScreen(star, -30))
             FlyTo(star.X, star.Y, _tz);   // picked from somewhere else (the trail, the list): bring it into view
+        else if (change.Property == BrightnessProperty) _brushes.Clear();   // close up, the glows take the brightness too
     }
 
     // ---- the grid over the map ---------------------------------------------------------------------------
@@ -565,6 +570,13 @@ public sealed class GalaxyCanvas : Control
         }
         if (e.Key is Key.OemPlus or Key.Add) { ZoomBy(1.6); e.Handled = true; return; }
         if (e.Key is Key.OemMinus or Key.Subtract) { ZoomBy(1 / 1.6); e.Handled = true; return; }
+        if (e.Key is Key.OemCloseBrackets or Key.OemOpenBrackets && e.KeyModifiers == KeyModifiers.None)
+        {
+            // ] brighter, [ dimmer, as a brush grows and shrinks in a paint program.
+            Brightness = Math.Clamp(Math.Round(Brightness * (e.Key == Key.OemCloseBrackets ? 1.25 : 0.8), 2), SoundsViewModel.DimmestStars, SoundsViewModel.BrightestStars);
+            e.Handled = true;
+            return;
+        }
         if (dir is not { } d || _all.Length == 0) return;
         var from = Selected is { } sel && _byId.TryGetValue(sel.Id, out var cur) ? cur : null;
         var next = NextStar(from, d.X, d.Y);
@@ -764,10 +776,12 @@ public sealed class GalaxyCanvas : Control
     /// thousand stars is vivid but never a white blob, and it keeps its colour.
     /// </summary>
     /// <remarks>
-    /// Stars are placed at x * scale + ox, y * scale + oy, unless <paramref name="warp"/> moves them (the intro).
+    /// Stars are placed at x * scale + ox, y * scale + oy, unless <paramref name="warp"/> moves them (the intro), and
+    /// only one in <paramref name="every"/> is painted (the intro on a big library, painted again each frame).
+    /// <paramref name="brightness"/> is the one chosen beside the galaxy.
     /// </remarks>
     void Paint(WriteableBitmap bmp, (int X0, int Y0, int X1, int Y1) cells, double scale, double ox, double oy,
-               Func<GalaxyStar, Point>? warp, float core, float glow)
+               Func<GalaxyStar, Point>? warp, float core, float glow, float brightness = 1, int every = 1)
     {
         var pw = bmp.PixelSize.Width;
         var ph = bmp.PixelSize.Height;
@@ -787,6 +801,7 @@ public sealed class GalaxyCanvas : Control
         for (var c = cy * Grid + cells.X0; c <= cy * Grid + cells.X1; c++)
         for (var k = starts[c]; k < starts[c + 1]; k++)
         {
+            if (every > 1 && k % every != 0) continue;
             var i = items[k];
             double sx, sy;
             if (warp is null) { sx = xs[i] * scale + ox; sy = ys[i] * scale + oy; }
@@ -837,7 +852,7 @@ public sealed class GalaxyCanvas : Control
             var l = Math.Max(acc[o], Math.Max(acc[o + 1], acc[o + 2])) * core;
             if (l > 0.004) { sum += l; lit++; }
         }
-        var gain = lit == 0 ? 1.7f : (float)Math.Clamp(0.9 / (sum / lit), 0.35, 1.7);
+        var gain = (lit == 0 ? 1.7f : (float)Math.Clamp(0.9 / (sum / lit), 0.35, 1.7)) * brightness;
         Parallel.For(0, ph, y =>
         {
             var fy = y / 4f + 0.5f;
@@ -914,10 +929,11 @@ public sealed class GalaxyCanvas : Control
     {
         if (_brushes.TryGetValue(colour, out var b)) return b;
         var c = Color.FromUInt32(colour);
+        var lift = Math.Clamp(Brightness, SoundsViewModel.DimmestStars, SoundsViewModel.BrightestStars);
         b = (new ImmutableSolidColorBrush(c),
-             new ImmutableRadialGradientBrush([new ImmutableGradientStop(0, Color.FromArgb(110, c.R, c.G, c.B)),
+             new ImmutableRadialGradientBrush([new ImmutableGradientStop(0, Color.FromArgb((byte)Math.Min(255, 110 * lift), c.R, c.G, c.B)),
                                                new ImmutableGradientStop(1, Color.FromArgb(0, c.R, c.G, c.B))], radius: 0.5),
-             new ImmutableSolidColorBrush(Color.FromArgb(38, c.R, c.G, c.B)));
+             new ImmutableSolidColorBrush(Color.FromArgb((byte)Math.Min(255, 38 * lift), c.R, c.G, c.B)));
         _brushes[colour] = b;
         return b;
     }
@@ -930,6 +946,8 @@ public sealed class GalaxyCanvas : Control
 
     // Below this many stars in view each is drawn properly; above the upper one they're only painted.
     const int Crisp = 1500, Painted = 5000;
+    // Without the graphics card, the fly-in paints about this many stars a frame, so it stays quick on a big library.
+    const int FlyInStars = 20_000;
 
     /// <summary>The parts of the view the page's own panels cover (the star count, the zoom buttons, the mini-map), kept free of names.</summary>
     List<Rect> Covered()
@@ -1004,19 +1022,23 @@ public sealed class GalaxyCanvas : Control
 
         // The painted sky, repainted only when the view or the stars change.
         // On the graphics card when there is one: redrawn when the view changes, and slid along while you drag a big one.
-        if (GalaxyGpu.Available != false && intro >= 1)
+        if (GalaxyGpu.Available != false)
         {
-            var area = Math.Max(w * h, 1);
-            var gain = (float)Math.Clamp(1.7 / Math.Max(1, inView * 9.0 / area), 0.35, 1.7);
-            ctx.Custom(new GalaxyGpu.Op(new Rect(0, 0, w, h), new GalaxyGpu.Frame(
-                _xs, _ys, _rgb, _weight, _cellStart, _cellItems, Grid, view, Scale, w / 2 - _cx * Scale, MidY - _cy * Scale,
-                (int)Math.Ceiling(w), (int)Math.Ceiling(h), painted, glow, gain, _panning || _miniDrag || _gliding)));
+            // The fly-in, the first time the stars arrive: the sky, stamped once, grows out from the middle to its place.
+            // (It was painted afresh on the processor every frame, star by star: with 450,000 stars, about 180 ms a frame
+            // on the window's thread each time Sound Lab opened. Solomon, 2026-10-27: "switching pages not very responsive".)
+            var grown = intro >= 1 ? 1 : 0.3 + 0.7 * (1 - Math.Pow(1 - intro, 3));
+            var mid = ToScreen(0.5, 0.5);
+            using (ctx.PushTransform(Matrix.CreateTranslation(-mid.X, -mid.Y) * Matrix.CreateScale(grown, grown) * Matrix.CreateTranslation(mid.X, mid.Y)))
+                ctx.Custom(new GalaxyGpu.Op(new Rect(0, 0, w, h), new GalaxyGpu.Frame(
+                    _xs, _ys, _rgb, _weight, _cellStart, _cellItems, Grid, view, Scale, w / 2 - _cx * Scale, MidY - _cy * Scale,
+                    (int)Math.Ceiling(w), (int)Math.Ceiling(h), painted, glow, (float)Brightness, _panning || _miniDrag || _gliding)));
         }
         else
         {
             // While you drag a big, slow-to-paint view, the last picture just slides along with you; it's repainted
             // when you let go.
-            var key = (_cx, _cy, _zoom, w, h, intro, _version, painted);
+            var key = (_cx, _cy, _zoom, w, h, intro, _version, painted, Brightness);
             var shift = new Vector();
             var sliding = (_panning || _miniDrag) && _paintMs > 25 && _sky is not null && _skyKey is not null
                           && Equals(key with { Item1 = _skyCx, Item2 = _skyCy }, _skyKey);
@@ -1025,7 +1047,8 @@ public sealed class GalaxyCanvas : Control
             {
                 var started = System.Diagnostics.Stopwatch.StartNew();
                 _sky = Bitmap(_sky, (int)Math.Ceiling(w), (int)Math.Ceiling(h));
-                Paint(_sky, view, Scale, w / 2 - _cx * Scale, MidY - _cy * Scale, intro < 1 ? Pos : null, painted * (float)(0.4 + 0.6 * intro), glow);
+                Paint(_sky, view, Scale, w / 2 - _cx * Scale, MidY - _cy * Scale, intro < 1 ? Pos : null, painted * (float)(0.4 + 0.6 * intro), glow,
+                      (float)Brightness, intro < 1 ? _all.Length / FlyInStars + 1 : 1);
                 _skyKey = key;
                 (_skyCx, _skyCy) = (_cx, _cy);
                 _paintMs = started.Elapsed.TotalMilliseconds;
