@@ -54,7 +54,7 @@ public sealed partial class PluginsViewModel
         {
             // Checked again: a drive unplugged since the card opened leaves an old copy the only one the plugin can reach.
             card.Busy = true;
-            var keep = await Task.Run(() =>
+            var keep = await LookAgain(() =>
             {
                 var moved = _db.MovedFolders();
                 return old.Where(m => !FolderMove.OldCopyCanGo(m)).Select(Real)
@@ -224,7 +224,7 @@ public sealed partial class PluginsViewModel
         card.Confirm = async () =>
         {
             // Checked again: the drive may have gone since the card opened.
-            var canGo = await Task.Run(() => FolderMove.OldCopyCanGo(moved));
+            var canGo = await LookAgain(() => FolderMove.OldCopyCanGo(moved));
             if (Card != card) return;   // Keep was pressed while it looked
             if (!canGo)
             {

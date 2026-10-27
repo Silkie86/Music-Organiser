@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Runtime.CompilerServices;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core;
@@ -300,6 +301,14 @@ public sealed partial class PluginsViewModel
     internal static List<(PluginSpaceInfo Space, SpaceFolder Folder)> FoldersInside(string path, IReadOnlyList<PluginSpaceInfo> spaces) =>
         spaces.SelectMany(s => s.Folders.Where(g => DiskSpace.IsInside(g.Path, path) && !DiskSpace.IsInside(path, g.Path)).Select(g => (s, g))).ToList();
 
+    /// <summary>
+    /// The look again before a Keep or Delete card removes anything, in the background. It always carries on through the
+    /// window's queue, even when the look was over before it was awaited, so a Keep pressed meanwhile is always seen
+    /// (CI caught a look that quick deleting what Keep had kept).
+    /// </summary>
+    static ConfiguredTaskAwaitable<T> LookAgain<T>(Func<T> look) =>
+        Task.Run(look).ConfigureAwait(ConfigureAwaitOptions.ContinueOnCapturedContext | ConfigureAwaitOptions.ForceYielding);
+
     async Task DeleteAsync(SpaceCard card, string key)
     {
         var picked = card.Items.Where(i => i.IsTicked).ToList();
@@ -521,7 +530,7 @@ public sealed partial class PluginsViewModel
             // Checked again against your projects as they are now: the list is made once a week, and a song saved since
             // may use a format it calls spare.
             card.Busy = true;
-            var now = await Task.Run(() => new SpaceMeter(_db).SpareCopiesNow());
+            var now = await LookAgain(() => new SpaceMeter(_db).SpareCopiesNow());
             if (Card != card) return;   // Keep was pressed while it looked
             var still = now.Select(c => c.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var stale = card.Items.Where(i => i.IsTicked && !still.Contains(i.Folder.Path)).ToList();
