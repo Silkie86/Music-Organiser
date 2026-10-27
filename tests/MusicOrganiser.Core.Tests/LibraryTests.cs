@@ -1,6 +1,7 @@
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins;
 using Xunit;
 
 namespace MusicOrganiser.Core.Tests;
@@ -633,6 +634,38 @@ public class LibraryTests : IDisposable
 
         var suggestions = MatchFinder.ForPlugin(_db, "Pro-Q 4");
         Assert.Equal("FabFilter Pro-Q 3", suggestions.First().Candidate);
+    }
+
+    [Fact]
+    public void A_plugin_counts_as_installed_by_the_ID_its_song_saved_whatever_the_song_or_the_plugin_calls_it()
+    {
+        // Solomon (F12 note, 27 Oct 2026): "you should go by the plugin id not the name to see if something is missing".
+        // His "Click Clack" showed Waves' TG12345 missing: the song calls it one thing and his WaveShell another.
+        var folder = Path.Combine(_root, "Click Clack");
+        Directory.CreateDirectory(folder);
+        Fixtures.StudioOneInserts(folder);
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        string[] names = ["WaveShell1-VST3 14.0_x64", "TG12345 Stereo", "WaveShell1-VST 14.0_x64", "Kramer Tape", "FabFilter Pro-Q 2"];
+        IEnumerable<string> Missing() =>
+            _db.Project(_db.Projects().Single(p => p.Name == "Click Clack").Id)!.Plugins.Where(p => !p.Installed).Select(p => p.Name).Order();
+
+        // By name alone: Studio One's own effects and the renamed Pro-Q 2 insert are there, the two Waves plugins aren't.
+        _db.ReplaceInstalledPlugins(names);
+        Assert.Equal(["Abbey Road EMI TG12345 Ch Stereo", "Kontakt 5 16out", "Kramer Tape Stereo"], Missing());
+
+        // The plugin scanner reads the VST3 WaveShell: the same names as before, but now the song's TG12345 has its ID.
+        _db.SavePluginScan(new(@"C:\Program Files\Common Files\VST3\WaveShell1-VST3 14.0_x64.vst3",
+            [new ScannedPlugin { Format = "VST3", Id = "56535454473553746731323334352073", Name = "TG12345 Stereo" }]), new PluginStamp(1, 1));
+        _db.ReplaceInstalledPlugins(names);
+        Assert.Equal(["Kontakt 5 16out", "Kramer Tape Stereo"], Missing());
+
+        // Kramer Tape's VST3 isn't in it, but the VST2 shell has the same four letters: a Waves plugin, with a WaveShell here.
+        _db.SavePluginScan(new(@"C:\Program Files\VSTPlugins\WaveShell1-VST 14.0_x64.dll",
+            [new ScannedPlugin { Format = "VST2", Id = "TAPS", Name = "Kramer Tape" }]), new PluginStamp(1, 1));
+        scanner.ScanProjects(full: true);   // the song read again knowing that
+        Assert.Equal(["Kontakt 5 16out"], Missing());   // the one plugin really not here
+        Assert.Equal(1, _db.Projects().Single(p => p.Name == "Click Clack").MissingPlugins);
     }
 
     [Fact]

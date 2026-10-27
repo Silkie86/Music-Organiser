@@ -87,6 +87,7 @@ public sealed partial class LibraryDb : IDisposable
         Exec(Schema);
         Exec(PluginScanSchema);
         Exec(SpaceSchema);
+        AddColumn("plugins", "plugin_id", "TEXT NOT NULL DEFAULT ''");
         AddColumn("projects", "detected_key", "TEXT");
         AddColumn("projects", "created", "INTEGER");
         AddColumn("projects", "note_count", "INTEGER");
@@ -348,9 +349,12 @@ public sealed partial class LibraryDb : IDisposable
         foreach (var p in info?.Plugins ?? [])
         {
             var key = NameKey(p.Name);
-            using var cmd = Cmd("INSERT INTO plugins VALUES ($id, $n, $k, $v, $kind, $f, $path, $inst)",
+            using var cmd = Cmd("""
+                INSERT INTO plugins (project_id, name, name_key, vendor, kind, format, path, installed, plugin_id)
+                VALUES ($id, $n, $k, $v, $kind, $f, $path, $inst, $pid)
+                """,
                 ("$id", id), ("$n", p.Name), ("$k", key), ("$v", p.Vendor), ("$kind", (int)p.Kind),
-                ("$f", p.Format), ("$path", p.Path), ("$inst", IsInstalled(p, key, installed) ? 1 : 0));
+                ("$f", p.Format), ("$path", p.Path), ("$inst", IsInstalled(p, key, installed) ? 1 : 0), ("$pid", p.Id));
             cmd.Transaction = tx;
             cmd.ExecuteNonQuery();
         }
@@ -433,12 +437,14 @@ public sealed partial class LibraryDb : IDisposable
 
     sealed record StoredInfo(List<string> Tracks, Dictionary<string, string> Details, List<string> Warnings);
 
-    static bool IsInstalled(PluginRef p, string key, HashSet<string> installed)
+    bool IsInstalled(PluginRef p, string key, HashSet<string> installed)
     {
         if (p.Format.Equals("Native", StringComparison.OrdinalIgnoreCase)) return true;
         if (p.Path.Length > 0 && (File.Exists(p.Path) || Directory.Exists(p.Path))) return true;
         if (PluginCatalog.IsFlStudioBundled(p.Name, p.Vendor, p.Path)) return true;
         if (installed.Count == 0) return true;   // no plugin scan yet: don't cry wolf
+        // The ID the project saved is the plugin itself, whatever it's called: the plugin scanner found it in a plugin file.
+        if (p.Id.Length > 0 && ScannedIds().Has(p.Id)) return true;
         if (installed.Contains(key)) return true;
         if (PluginCatalog.IsWaves(p.Name, p.Path) && installed.Any(k => k.StartsWith("waveshell"))) return true;
         // Projects often store "Vendor Name" while the file is just "Name", or the reverse.
@@ -490,25 +496,35 @@ public sealed partial class LibraryDb : IDisposable
     {
         var list = names.ToList();
         var now = Query("SELECT name, name_key FROM installed_plugins", r => (Name: (string)r["name"], Key: (string)r["name_key"])).ToList();
-        // The same list as last time (most scans): nothing to write, and every project's plugins keep their answers.
+        // The same list as last time, and the same plugins found in the files (most scans): nothing to write, and every
+        // project's plugins keep their answers.
         var keys = new Dictionary<string, string>();
         foreach (var n in list) keys.TryAdd(NameKey(n), n);
-        if (now.Count == keys.Count && now.All(r => keys.TryGetValue(r.Key, out var n) && n == r.Name)) return;
-        lock (_lock)
+        var same = now.Count == keys.Count && now.All(r => keys.TryGetValue(r.Key, out var n) && n == r.Name);
+        var ids = ScannedIds().Signature;
+        if (same && GetSetting(FlaggedIdsKey) == ids) return;
+        if (!same)
         {
-            using var tx = _conn.BeginTransaction();
-            using (var del = Cmd("DELETE FROM installed_plugins")) { del.Transaction = tx; del.ExecuteNonQuery(); }
-            foreach (var n in list)
+            lock (_lock)
             {
-                using var cmd = Cmd("INSERT OR IGNORE INTO installed_plugins VALUES ($n, $k)", ("$n", n), ("$k", NameKey(n)));
-                cmd.Transaction = tx;
-                cmd.ExecuteNonQuery();
+                using var tx = _conn.BeginTransaction();
+                using (var del = Cmd("DELETE FROM installed_plugins")) { del.Transaction = tx; del.ExecuteNonQuery(); }
+                foreach (var n in list)
+                {
+                    using var cmd = Cmd("INSERT OR IGNORE INTO installed_plugins VALUES ($n, $k)", ("$n", n), ("$k", NameKey(n)));
+                    cmd.Transaction = tx;
+                    cmd.ExecuteNonQuery();
+                }
+                tx.Commit();
             }
-            tx.Commit();
+            PluginsChanged();
         }
-        PluginsChanged();
         RefreshInstalledFlags();
+        SetSetting(FlaggedIdsKey, ids);
     }
+
+    // Which plugin IDs the projects' installed answers were last worked out with: the answers go by them too.
+    const string FlaggedIdsKey = "installed_flags_ids";
 
     /// <summary>
     /// Re-check every project plugin against the installed list. Only the rows whose answer changed are written, and in
@@ -518,9 +534,10 @@ public sealed partial class LibraryDb : IDisposable
     public void RefreshInstalledFlags()
     {
         var installed = InstalledKeys();
-        var rows = Query("SELECT rowid, name, name_key, vendor, kind, format, path, installed FROM plugins",
+        var rows = Query("SELECT rowid, name, name_key, vendor, kind, format, path, installed, plugin_id FROM plugins",
             r => (RowId: (long)r["rowid"], Key: NameKey(Str(r, "name")), Was: Long(r, "installed") != 0,
-                  Ref: new PluginRef(Str(r, "name"), Str(r, "vendor"), (PluginKind)Long(r, "kind"), Str(r, "format"), Str(r, "path"))));
+                  Ref: new PluginRef(Str(r, "name"), Str(r, "vendor"), (PluginKind)Long(r, "kind"), Str(r, "format"), Str(r, "path"),
+                                     Str(r, "plugin_id"))));
         var changed = rows.Select(row => (row.RowId, Now: IsInstalled(row.Ref, row.Key, installed), row.Was))
                           .Where(row => row.Now != row.Was)
                           .Select(row => (row.RowId, row.Now))

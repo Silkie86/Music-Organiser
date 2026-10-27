@@ -20,6 +20,7 @@ namespace MusicOrganiser.Core.Parsers;
 public sealed partial class StudioOneReader : IProjectReader
 {
     public string Daw => "Studio One";
+    public int Version => 2;   // 2: each insert's plugin by its own name and ID, not the name the insert shows; Studio One's own effects and Note FX (2026-10-27)
     public IReadOnlyList<string> Extensions { get; } = [".song"];
 
     static readonly string[] PresetExtensions = [".vstpreset", ".fxp", ".fxb", ".aupreset", ".preset", ".multipreset"];
@@ -90,9 +91,15 @@ public sealed partial class StudioOneReader : IProjectReader
             foreach (var e in root.DescendantsAndSelf())
             {
                 var name = Attr(e, "name").Trim();
-                if (name.Length == 0 || !(Id(e) == "deviceData" || e.Attribute("classID") is not null)) continue;
-                var vendor = Attr(e, "vendor");
-                info.Plugins.Add(new PluginRef(name, vendor, kind, FormatOf(e, vendor), Attr(e, "subCategory")));
+                if (name.Length == 0) continue;
+                // Each insert keeps a note of its plugin, "classInfo": the plugin's own name and ID, and whether it's a VST2, a
+                // VST3 or one of Studio One's own. Its "deviceData" has the name the insert shows, which Studio One numbers
+                // ("FabFilter Pro-Q 2 2", "Kontakt 5 16out 2") and you can change: read by that, plugins you have showed as
+                // missing (Solomon's "Click Clack", 27 Oct 2026). An insert without the note goes by its own name.
+                if (e.Attribute("classID") is { } classId)
+                    info.Plugins.Add(Plugin(e, name, classId.Value, kind));
+                else if (Id(e) == "deviceData" && e.Parent?.Descendants().Any(d => d.Attribute("classID") is not null) != true)
+                    info.Plugins.Add(Plugin(e, name, e.Parent?.Elements().FirstOrDefault(u => Id(u) == "deviceClassID") is { } u ? Attr(u, "uid") : "", kind));
             }
         }
 
@@ -117,9 +124,31 @@ public sealed partial class StudioOneReader : IProjectReader
         return info.Dedupe();
     }
 
+    /// <summary>A plugin from Studio One's note of it, with its ID as the plugin scanner writes it.</summary>
+    static PluginRef Plugin(XElement e, string name, string classId, PluginKind kind)
+    {
+        var vendor = Attr(e, "vendor");
+        var format = FormatOf(e, vendor);
+        var id = PluginCatalog.ClassId(classId);
+        // A VST2 has no class ID of its own: Studio One makes one with the plugin's four letters inside.
+        if (format == "VST2") id = PluginCatalog.Vst2IdIn(id) ?? "";
+        return new PluginRef(name, vendor, KindOf(e) ?? kind, format, "", id);
+    }
+
+    static PluginKind? KindOf(XElement e) => Attr(e, "category") switch
+    {
+        "AudioSynth" => PluginKind.Instrument,
+        "AudioEffect" or "AudioMixEffect" => PluginKind.Effect,
+        "MusicEffect" => PluginKind.NoteEffect,
+        _ => null,
+    };
+
     static string FormatOf(XElement e, string vendor)
     {
-        foreach (var key in new[] { "deviceClass", "category", "type" })
+        // subCategory starts with it: "VST2", "VST3/Delay", "(Native)/EQ".
+        var sub = Attr(e, "subCategory");
+        if (sub.StartsWith("(Native)", StringComparison.Ordinal)) return "Native";
+        foreach (var key in new[] { "subCategory", "deviceClass", "category", "type" })
         {
             var v = Attr(e, key).ToLowerInvariant();
             if (v.Contains("vst3")) return "VST3";
@@ -127,6 +156,8 @@ public sealed partial class StudioOneReader : IProjectReader
             if (v.Contains("audiounit")) return "AU";
             if (v.Contains("clap")) return "CLAP";
         }
+        // Note FX (the Arpeggiator, Chorder, Repeater) are all Studio One's own, and say nothing more.
+        if (Attr(e, "category") == "MusicEffect" && sub.Length == 0) return "Native";
         return vendor.Contains("PreSonus", StringComparison.OrdinalIgnoreCase) ? "Native" : "";
     }
 

@@ -1,3 +1,4 @@
+using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Plugins;
 
 namespace MusicOrganiser.Core.Library;
@@ -103,6 +104,37 @@ public sealed partial class LibraryDb
             tx.Commit();
         }
         PluginsChanged();
+    }
+
+    /// <summary>
+    /// The IDs of every plugin the plugin scanner found, to tell whether a project's plugin is installed by the ID it saved.
+    /// Read again only once the scanner has found something new.
+    /// </summary>
+    PluginIds ScannedIds()
+    {
+        var revision = PluginsRevision;
+        if (_scannedIds is { } known && known.Revision == revision) return known;
+        var rows = Query("SELECT id, path FROM scanned_plugins WHERE id != ''", r => (Id: Str(r, "id"), Path: Str(r, "path")));
+        var waves = rows.Where(r => PluginCatalog.IsWaves("", r.Path))
+                        .Select(r => r.Id.Length == 32 ? PluginCatalog.Vst2IdIn(r.Id) : r.Id)
+                        .OfType<string>().ToHashSet(StringComparer.Ordinal);
+        return _scannedIds = new(revision, rows.Select(r => r.Id).ToHashSet(StringComparer.Ordinal), waves);
+    }
+
+    volatile PluginIds? _scannedIds;
+
+    /// <param name="Waves">
+    /// The VST2 four letters of every plugin in a Waves shell, whichever kind of shell it was found in: Waves give a plugin's VST3
+    /// the same four letters as its VST2, so a project that saved either one has it while there's a WaveShell.
+    /// </param>
+    sealed record PluginIds(long Revision, HashSet<string> Ids, HashSet<string> Waves)
+    {
+        /// <summary>Which IDs these are, the same from one run of the app to the next, to tell when they've changed.</summary>
+        public string Signature { get; } = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(string.Join('\n', Ids.Order(StringComparer.Ordinal)))));
+
+        public bool Has(string id) =>
+            Ids.Contains(id) || (id.Length == 32 ? PluginCatalog.Vst2IdIn(id) : id) is { } vst2 && Waves.Contains(vst2);
     }
 
     /// <summary>The names of every plugin found inside the plugin files (each one in a Waves shell, say).</summary>

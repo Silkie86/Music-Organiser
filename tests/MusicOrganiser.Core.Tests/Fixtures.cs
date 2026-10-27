@@ -788,6 +788,70 @@ public static class Fixtures
         return path;
     }
 
+    /// <summary>
+    /// A song laid out as Studio One saves its inserts (Solomon's "Click Clack", Studio One 7): each one has the name it shows
+    /// ("deviceData", which Studio One numbers and you can rename) and a note of the plugin itself ("classInfo", its own name
+    /// and ID, and whether it's a VST2, a VST3 or one of Studio One's own).
+    /// </summary>
+    public static string StudioOneInserts(string dir, string name = "Click Clack")
+    {
+        var path = Path.Combine(dir, name + ".song");
+        using var zip = ZipFile.Open(path, ZipArchiveMode.Create);
+        void Add(string entry, string text)
+        {
+            using var w = new StreamWriter(zip.CreateEntry(entry).Open());
+            w.Write(text);
+        }
+        static string Insert(string slot, string shown, string classId, string plugin, string category, string sub = "") => $"""
+            <Attributes name="{slot}">
+              <UID x:id="deviceClassID" uid="{classId}"/>
+              <Attributes x:id="deviceData" name="{shown}"/>
+              <Attributes x:id="ghostData">
+                <Attributes x:id="classInfo" classID="{classId}" name="{plugin}" category="{category}"{(sub.Length > 0 ? $" subCategory=\"{sub}\"" : "")}/>
+              </Attributes>
+            </Attributes>
+            """;
+        Add("metainfo.xml", """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <MetaInformation>
+              <Attribute id="Document:Generator" value="Studio One/7.2.1.106594"/>
+              <Attribute id="Media:Tempo" value="140"/>
+            </MetaInformation>
+            """);
+        Add("Devices/audiomixer.xml", $"""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <AudioMixer>
+              <AudioTrackChannel name="Channel01" label="Kt. st. 1">
+                <Attributes x:id="Inserts">
+                  {Insert("FX01", "FabFilter Pro-Q 2 2", "{56535446-5132-7066-6162-66696C746572}", "FabFilter Pro-Q 2", "AudioEffect", "VST2")}
+                  {Insert("FX02", "TG12345 Stereo", "{56535454-4735-5374-6731-323334352073}", "Abbey Road EMI TG12345 Ch Stereo", "AudioEffect", "VST3/Mixing")}
+                  {Insert("FX03", "Kramer Tape Stereo", "{56535454-4150-536B-7261-6D6572207461}", "Kramer Tape Stereo", "AudioEffect", "VST3/Distortion")}
+                  {Insert("FX04", "Pro EQ", "{D9AE9ACD-69B4-4B43-B8D5-983E39C559A5}", "Pro EQ", "AudioEffect", "(Native)/EQ")}
+                  {Insert("FX05", "Gate", "{132C0E1F-06FD-4C96-BD65-678C04FE1C92}", "Gate", "AudioEffect", "(Native)/Dynamics")}
+                </Attributes>
+              </AudioTrackChannel>
+            </AudioMixer>
+            """);
+        Add("Devices/audiosynthfolder.xml", $"""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <SynthFolder>
+              {Insert("Inst03", "Kontakt 5 16out 2", "{5653544E-694F-376B-6F6E-74616B742035}", "Kontakt 5 16out", "AudioSynth", "VST2")}
+              {Insert("Inst01", "Impact", "{3713E26C-2FCA-4024-9F25-17E9D2BE2B9B}", "Impact", "AudioSynth", "(Native)/Sampler/Drum")}
+            </SynthFolder>
+            """);
+        Add("Devices/musictrackdevice.xml", $"""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <MusicTrackDevice>
+              {Insert("Slot02", "Arpeggiator 2", "{BDD2D6E5-3819-41B4-BF91-7B832DAAFA0B}", "Arpeggiator", "MusicEffect")}
+            </MusicTrackDevice>
+            """);
+        Add("Song/song.xml", """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <Song><Tracks><AudioTrack name="Kick"/></Tracks></Song>
+            """);
+        return path;
+    }
+
     // ---- Bitwig ------------------------------------------------------------------
 
     /// <summary>A file that only looks like Bitwig's format, for the text-scan fallback.</summary>
