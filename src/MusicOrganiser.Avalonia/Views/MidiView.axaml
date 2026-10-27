@@ -218,10 +218,11 @@
                                 <StackPanel Classes="group" Margin="0,0,6,6">
                                     <Button Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PlaySelectedAloneCommand}"
                                             ToolTip.Tip="Listen to this part on its own. Click along the notes to jump.">
-                                        <Panel>
-                                            <TextBlock Text="▶  Play" IsVisible="{Binding !IsPlayingAlone}" />
-                                            <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingAlone}" />
-                                        </Panel>
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <views:PlayIcon IsPlaying="{Binding IsPlayingAlone}" />
+                                            <TextBlock Text="Play" IsVisible="{Binding !IsPlayingAlone}" />
+                                            <TextBlock Text="Stop" IsVisible="{Binding IsPlayingAlone}" />
+                                        </StackPanel>
                                     </Button>
                                     <ToggleButton IsChecked="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).Loop}"
                                                   ToolTip.Tip="Play round and round until you stop it">

@@ -12,7 +12,7 @@ using Xunit;
 
 namespace MusicOrganiser.Avalonia.Tests;
 
-/// <summary>The piano roll: new notes copying the last one, and notes snapping like Bitwig.</summary>
+/// <summary>The piano roll: new notes copying the last one, notes snapping like Bitwig, and notes picked together.</summary>
 public sealed class PianoRollTests
 {
     const int Beat = 96;
@@ -126,5 +126,127 @@ public sealed class PianoRollTests
         window.MouseDown(new Point(XOf(3 * Beat) + 1, Key60), MouseButton.Left);
         window.MouseUp(new Point(XOf(3 * Beat) + 1, Key60), MouseButton.Left);
         Assert.Equal([0L, 3L * Beat], Assert.Single(edits).Select(n => n.Start));
+    }
+
+    // ---- notes picked together, and snapping to the chords (Solomon, 2026-10-27) ----
+
+    /// <summary>Where key <paramref name="key"/>'s row is, with <paramref name="notes"/> on the roll (two octaves round them).</summary>
+    static double YOf(int key, IReadOnlyList<NoteEvent> notes)
+    {
+        int low = notes.Min(n => n.Key) - 2, high = notes.Max(n => n.Key) + 2;
+        if (high - low < 24) high = (low + high) / 2 + 12;
+        return 20 + (high - key) * (280 / 25.0) + 5;
+    }
+
+    static readonly NoteEvent A = new(0, Beat, 60, 70), B = new(2 * Beat, Beat, 64, 70);
+    static bool CMajor(NoteEvent n) => n.Key % 12 is 0 or 4 or 7;
+
+    static void Press(Window window, Key key, RawInputModifiers mods = RawInputModifiers.None)
+    {
+        var physical = key switch
+        {
+            Key.Up => PhysicalKey.ArrowUp, Key.Down => PhysicalKey.ArrowDown, Key.Left => PhysicalKey.ArrowLeft, Key.Right => PhysicalKey.ArrowRight,
+            Key.Escape => PhysicalKey.Escape, Key.Delete => PhysicalKey.Delete, Key.A => PhysicalKey.A, _ => PhysicalKey.None,
+        };
+        window.KeyPress(key, mods, physical, null);
+        window.KeyRelease(key, mods, physical, null);
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    [AvaloniaFact]
+    public void Ctrl_click_picks_notes_and_dragging_one_drags_them_all()
+    {
+        var (window, roll, edits) = Roll();
+        roll.Notes = [A, B];
+        IReadOnlyList<NoteEvent> notes = [A, B];
+        window.MouseDown(new Point(XOf(Beat / 2), YOf(60, notes)), MouseButton.Left, RawInputModifiers.Control);
+        window.MouseUp(new Point(XOf(Beat / 2), YOf(60, notes)), MouseButton.Left, RawInputModifiers.Control);
+        window.MouseDown(new Point(XOf(2 * Beat + Beat / 2), YOf(64, notes)), MouseButton.Left, RawInputModifiers.Control);
+        window.MouseUp(new Point(XOf(2 * Beat + Beat / 2), YOf(64, notes)), MouseButton.Left, RawInputModifiers.Control);
+        Assert.Empty(edits);
+        Assert.Equal([A, B], roll.Selection!.OrderBy(n => n.Start));
+
+        // The first dragged a beat later and two keys up: the second goes with it, and both stay picked.
+        window.MouseDown(new Point(XOf(Beat / 2), YOf(60, notes)), MouseButton.Left);
+        window.MouseMove(new Point(XOf(Beat + Beat / 2), YOf(62, notes)), RawInputModifiers.LeftMouseButton);
+        window.MouseUp(new Point(XOf(Beat + Beat / 2), YOf(62, notes)), MouseButton.Left);
+        NoteEvent[] moved = [A with { Start = Beat, Key = 62 }, B with { Start = 3 * Beat, Key = 66 }];
+        Assert.Equal(moved, Assert.Single(edits).OrderBy(n => n.Start));
+        Assert.Equal(moved, roll.Selection!.OrderBy(n => n.Start));
+
+        // A Ctrl+click on a picked note lets it go; a plain click on one picks it alone.
+        notes = roll.Notes!;
+        window.MouseDown(new Point(XOf(Beat + Beat / 2), YOf(62, notes)), MouseButton.Left, RawInputModifiers.Control);
+        window.MouseUp(new Point(XOf(Beat + Beat / 2), YOf(62, notes)), MouseButton.Left, RawInputModifiers.Control);
+        Assert.Equal([moved[1]], roll.Selection);
+        // (Grabbed somewhere else along it, so it isn't a double-click, which takes a note away.)
+        window.MouseDown(new Point(XOf(Beat + 15), YOf(62, notes)), MouseButton.Left);
+        window.MouseUp(new Point(XOf(Beat + 15), YOf(62, notes)), MouseButton.Left);
+        Assert.Equal([moved[0]], roll.Selection);
+    }
+
+    [AvaloniaFact]
+    public void Ctrl_dragging_on_an_empty_spot_picks_the_notes_in_the_box()
+    {
+        var (window, roll, edits) = Roll();
+        roll.Notes = [A, B];
+        IReadOnlyList<NoteEvent> notes = [A, B];
+        // From an empty spot half a beat before B, two keys above it, to half way along it a key below: only B is in the box.
+        var from = new Point(XOf(Beat + Beat / 2), YOf(66, notes));
+        var to = new Point(XOf(2 * Beat + Beat / 2), YOf(63, notes));
+        window.MouseDown(from, MouseButton.Left, RawInputModifiers.Control);
+        window.MouseMove(to, RawInputModifiers.LeftMouseButton | RawInputModifiers.Control);
+        window.MouseUp(to, MouseButton.Left, RawInputModifiers.Control);
+        Assert.Empty(edits);   // picking changes nothing
+        Assert.Equal([B], roll.Selection);
+
+        // Ctrl+A picks them all, Esc lets go.
+        Press(window, Key.A, RawInputModifiers.Control);
+        Assert.Equal(2, roll.Selection!.Count);
+        Press(window, Key.Escape);
+        Assert.Null(roll.Selection);
+    }
+
+    [AvaloniaFact]
+    public void The_arrows_move_the_picked_notes_to_the_next_note_of_the_chords_when_snapping_to_them()
+    {
+        var (window, roll, edits) = Roll();
+        roll.Notes = [A, B];
+        roll.ChordTest = CMajor;
+        roll.SnapChord = true;
+        roll.Selection = [B];
+        roll.Focus();
+        Press(window, Key.Up);
+        Assert.Equal(67, edits[^1].Single(n => n.Start == B.Start).Key);   // E to G, over C
+        Assert.Equal(60, edits[^1].Single(n => n.Start == 0).Key);          // the one not picked stays
+        Press(window, Key.Up, RawInputModifiers.Shift);
+        Assert.Equal(79, edits[^1].Single(n => n.Start == B.Start).Key);   // Shift: an octave
+        Press(window, Key.Right);
+        Assert.Equal(B.Start + Beat / 4, roll.Selection!.Single().Start);   // along by a sixteenth
+        roll.SnapChord = false;
+        Press(window, Key.Down);
+        Assert.Equal(78, roll.Selection!.Single().Key);   // a semitone when not snapping to the chords
+        Press(window, Key.Delete);
+        Assert.Equal([A], edits[^1]);
+        Assert.Null(roll.Selection);
+    }
+
+    [AvaloniaFact]
+    public void Snapping_to_the_chords_puts_notes_dragged_or_clicked_in_only_on_the_chords_notes()
+    {
+        var (window, roll, edits) = Roll();
+        roll.ChordTest = CMajor;
+        roll.SnapChord = true;
+        IReadOnlyList<NoteEvent> notes = roll.Notes!;
+        // Dragged up three keys, to D♯: it goes on to E, the nearest note of C the way it was going.
+        window.MouseDown(new Point(XOf(Beat / 2), YOf(60, notes)), MouseButton.Left);
+        window.MouseMove(new Point(XOf(Beat / 2), YOf(63, notes)), RawInputModifiers.LeftMouseButton);
+        window.MouseUp(new Point(XOf(Beat / 2), YOf(63, notes)), MouseButton.Left);
+        Assert.Equal(64, Assert.Single(edits).Single().Key);
+        // Clicked in on C♯: it goes in on C.
+        notes = roll.Notes!;
+        window.MouseDown(new Point(XOf(3 * Beat) + 1, YOf(61, notes)), MouseButton.Left);
+        window.MouseUp(new Point(XOf(3 * Beat) + 1, YOf(61, notes)), MouseButton.Left);
+        Assert.Equal(60, edits[^1].Single(n => n.Start == 3 * Beat).Key);
     }
 }

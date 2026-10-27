@@ -239,6 +239,25 @@ public static class ClipFit
     }
 
     /// <summary>
+    /// One move for every go round of <paramref name="clip"/>: the key its notes sit in best on <paramref name="lane"/>
+    /// (across the whole timeline), for a line that follows the chord track by nudging its clashes. A melody stays a
+    /// melody instead of moving a go round at a time to each chord (Solomon, 2026-10-27: "seems to be making silly
+    /// decisions musically").
+    /// </summary>
+    public static List<int> Whole(PlaygroundClip clip, IReadOnlyList<TimedChord> lane, HarmonyStyle style)
+    {
+        var source = clip.Notes;
+        var notes = new List<NoteEvent>();
+        for (var r = 0; r < clip.Repeats; r++)
+        {
+            var at = clip.RepeatAt(r);
+            notes.AddRange(source.Where(n => at + n.Start >= clip.Start && at + n.Start < clip.End)
+                                 .Select(n => n with { Start = at + n.Start, Key = n.Key + clip.Transpose }));
+        }
+        return Enumerable.Repeat(Best(notes, lane, 0, style), clip.Repeats).ToList();
+    }
+
+    /// <summary>
     /// How far each go round of <paramref name="clip"/> moves to fit <paramref name="lane"/> (the chords from the other
     /// parts, across the whole timeline), judged on the notes of that go round that play.
     /// </summary>

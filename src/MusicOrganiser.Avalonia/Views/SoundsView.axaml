@@ -554,9 +554,11 @@
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="snd:SimilarSound">
                                                 <DockPanel Margin="0,1">
-                                                    <Button DockPanel.Dock="Left" Content="▶" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,6,0"
+                                                    <Button DockPanel.Dock="Left" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,6,0"
                                                             Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).SelectCommand}"
-                                                            CommandParameter="{Binding Sound}" />
+                                                            CommandParameter="{Binding Sound}">
+                                                        <views:PlayIcon />
+                                                    </Button>
                                                     <Button DockPanel.Dock="Right" Content="To Bitwig" Padding="6,1" FontSize="11" Margin="6,0,0,0"
                                                             ToolTip.Tip="Put it on a Sampler on a new track in Bitwig"
                                                             Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).ToBitwigCommand}"
@@ -616,9 +618,11 @@
                                                 <!-- Click anywhere on the row to hear it, as on the Library's tiles; double-click keeps it playing. -->
                                                 <DockPanel Margin="0,2" Background="Transparent" Cursor="Hand" ToolTip.Tip="{Binding Sound.Path}"
                                                            PointerPressed="OnSuggestionPressed" DoubleTapped="OnSuggestionDoubleTapped">
-                                                    <Button DockPanel.Dock="Left" Content="▶" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,10,0"
+                                                    <Button DockPanel.Dock="Left" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,10,0"
                                                             Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).PlayCommand}"
-                                                            CommandParameter="{Binding Sound}" />
+                                                            CommandParameter="{Binding Sound}">
+                                                        <views:PlayIcon />
+                                                    </Button>
                                                     <Button DockPanel.Dock="Right" Content="Open" Padding="8,2" Margin="8,0,0,0"
                                                             Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).RevealCommand}"
                                                             CommandParameter="{Binding Sound}" />
@@ -691,9 +695,11 @@
                                             <Border Classes="card" Margin="0,0,0,8" Padding="14,10">
                                                 <DockPanel>
                                                     <TextBlock DockPanel.Dock="Left" Text="{Binding Name}" Width="110" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                                    <Button DockPanel.Dock="Left" Content="▶" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,10,0"
+                                                    <Button DockPanel.Dock="Left" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,10,0"
                                                             Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).Kit.PlaySlotCommand}"
-                                                            CommandParameter="{Binding}" />
+                                                            CommandParameter="{Binding}">
+                                                        <views:PlayIcon />
+                                                    </Button>
                                                     <Button DockPanel.Dock="Right" Content="To Bitwig" Padding="6,2" Margin="6,0,0,0"
                                                             ToolTip.Tip="Put just this pad's sound on a Sampler on a new track in Bitwig"
                                                             IsEnabled="{Binding Slot.Sound, Converter={x:Static ObjectConverters.IsNotNull}}"
@@ -777,10 +783,12 @@
                                         <DataTemplate x:DataType="vm:Disagreement">
                                             <Border Classes="row" Padding="8,6" Margin="0,1">
                                                 <DockPanel>
-                                                    <Button Classes="flat" DockPanel.Dock="Left" Content="▶" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,10,0"
+                                                    <Button Classes="flat" DockPanel.Dock="Left" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,10,0"
                                                            
                                                             Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).PlayCommand}"
-                                                            CommandParameter="{Binding Sound}" />
+                                                            CommandParameter="{Binding Sound}">
+                                                        <views:PlayIcon />
+                                                    </Button>
                                                     <Button DockPanel.Dock="Right" Padding="8,2" Margin="6,0,0,0"
                                                             Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).ConfirmCommand}"
                                                             CommandParameter="{Binding}">

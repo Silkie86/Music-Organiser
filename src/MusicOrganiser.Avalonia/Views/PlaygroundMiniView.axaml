@@ -16,10 +16,11 @@
     <StackPanel Spacing="8">
         <WrapPanel>
             <Button Classes="accent" Margin="0,0,6,6" MinWidth="80" Command="{Binding PlayCommand}" ToolTip.Tip="Play them all together, round and round">
-                <Panel>
-                    <TextBlock Text="▶ Play" IsVisible="{Binding !IsPlaying}" />
-                    <TextBlock Text="■ Stop" IsVisible="{Binding IsPlaying}" />
-                </Panel>
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <views:PlayIcon IsPlaying="{Binding IsPlaying}" />
+                    <TextBlock Text="Play" IsVisible="{Binding !IsPlaying}" />
+                    <TextBlock Text="Stop" IsVisible="{Binding IsPlaying}" />
+                </StackPanel>
             </Button>
             <Button Content="Undo" Margin="0,0,6,6" Command="{Binding UndoCommand}" IsEnabled="{Binding CanUndo}" ToolTip.Tip="Take back the last change" />
             <Button Content="Open in Playground" Margin="0,0,6,6" Command="{Binding OpenInMainCommand}"

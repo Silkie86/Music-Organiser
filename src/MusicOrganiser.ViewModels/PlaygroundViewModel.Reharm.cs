@@ -51,7 +51,12 @@ public sealed partial class PlaygroundViewModel
 
     void Pick(ChordCell cell)
     {
-        if (TryingIdea is not null) BackIdea();
+        if (TryingIdea is not null)
+        {
+            // Another chord clicked while an idea is tried: the chords go back as they were, and the one there is picked.
+            BackIdea();
+            cell = Chords.FirstOrDefault(c => c.Timed.Start <= cell.Timed.Start && c.Timed.End > cell.Timed.Start) ?? cell;
+        }
         PickedChord = cell;
         RefreshChordIdeas();
         RightTab = ReharmTab;
@@ -115,6 +120,7 @@ public sealed partial class PlaygroundViewModel
     /// <summary>The chords changed (an edit, Undo, an idea kept): the same place stays picked if it still has a chord.</summary>
     void ChordsChangedUnderReharm()
     {
+        if (_tryBefore is not null) return;   // an idea being tried: the chord it was tried on stays picked
         TryingIdea = null;
         ProposedChords = null;
         if (PickedChord is { } old)
@@ -123,22 +129,39 @@ public sealed partial class PlaygroundViewModel
         RefreshChordIdeas();
     }
 
-    /// <summary>Step 2: the idea goes on the chord lane, striped, and plays with the parts following it.</summary>
+    /// <summary>
+    /// The idea as it was before the idea being tried went in; null when none is (Solomon, 2026-10-27: "notes dont follow
+    /// the reharm on screen but i hear the difference"). Trying an idea puts it in for real, so the chord lane, the clips
+    /// and the piano roll show what plays. Back puts this back, Keep makes it one Undo step, and nothing tried is saved
+    /// until it's kept. The ideas listed stay those for the chords as they were meanwhile, to try another.
+    /// </summary>
+    string? _tryBefore;
+    /// <summary>Where the idea being tried changes the chords (worked out before it went in).</summary>
+    (long From, long To) _tryRange;
+
+    /// <summary>Step 2: the idea goes in, striped on the chord lane, every part following it on screen, and it plays.</summary>
     internal async Task TryIdea(ReharmRow row)
     {
         if (TryingIdea == row) { await PreviewIdea(row); return; }   // its tile again: stop or play
-        StopPlaying();
+        if (RangeOf(row.Idea) is not { } range) return;
+        var playing = _playing;
+        if (_tryBefore is { } before) Restore(before);   // another idea was being tried: this one goes in on the chords as they were
+        else _tryBefore = _session.ToJson();
+        _tryRange = range;
+        PutIdea(row.Idea, range, asPart: false);
+        Changed(settled: false);
         var lane = row.Idea.Lane;
-        var range = RangeOf(row.Idea);
         var key = Harmony.Key;
         var funcs = key is { } k ? ChordFunctions.Analyse(lane.Select(c => c.Chord).ToList(), k.Tonic, k.Minor) : null;
         var length = Harmony.Length;
-        ProposedChords = range is { } r
-            ? lane.Select((c, i) => (c, i)).Where(p => p.c.Start < r.To && p.c.End > r.From).Select(p => new ChordCell(p.c, funcs?[p.i], length)).ToList()
-            : [];
+        ProposedChords = lane.Select((c, i) => (c, i)).Where(p => p.c.Start < range.To && p.c.End > range.From)
+                             .Select(p => new ChordCell(p.c, funcs?[p.i], length, set: true)).ToList();
         TryingIdea = row;
         Message = $"Trying {row.Title}: {row.Swap}. Keep it, or go back to {row.Idea.Before}.";
-        await PreviewIdea(row);
+        PlayInBitwigSoon();
+        // Heard straight away: carrying on from where it was, else from the bar before the change.
+        if (playing) _ = PlayAsync(keepPlace: true);
+        else row.IsPlaying = await PlayAsync(startAt: Math.Max(0, range.From / Bar * Bar - Bar));
     }
 
     /// <summary>Step 3: the tried idea becomes the chords. Undo takes it back.</summary>
@@ -152,18 +175,43 @@ public sealed partial class PlaygroundViewModel
     void Keep(bool asPart)
     {
         if (TryingIdea is not { } row) return;
-        StopPlaying();
-        ApplyIdea(row.Idea, asPart);   // the chords change, which picks the chord now at the same place
-        if (!row.Idea.Whole) Message = $"Kept {row.Title}: {row.Swap}. Undo takes it back.";
+        if (asPart || _tryBefore is null)
+        {
+            // As a part: the chord track goes back as it was, and a plain Chords part plays the idea instead.
+            if (_tryBefore is { } before) { _tryBefore = null; Restore(before); }
+            TryingIdea = null;
+            ProposedChords = null;
+            ApplyIdea(row.Idea, asPart);
+            return;
+        }
+        var range = _tryRange;
+        KeepTried();
+        Message = KeptText(row.Idea, range, asPart: false);
     }
 
-    /// <summary>Step 3: back to the chords as they were, to try another idea.</summary>
+    /// <summary>The idea being tried kept as it plays (Keep, or anything else changed meanwhile): one Undo step takes it back.</summary>
+    void KeepTried()
+    {
+        if (_tryBefore is not { } before) return;
+        var row = TryingIdea;
+        _tryBefore = null;
+        Remember(before);
+        TryingIdea = null;
+        ProposedChords = null;
+        SaveCurrent();
+        RefreshIdeas();   // the ideas for the chords as kept, with the chord at the same place picked
+        if (row is not null) Message = $"Kept {row.Title}: {row.Swap}. Undo takes it back.";
+    }
+
+    /// <summary>Step 3: back to the chords as they were, to try another idea. It carries on playing, so the two can be compared.</summary>
     [RelayCommand]
     void BackIdea()
     {
-        StopPlaying();
         TryingIdea = null;
         ProposedChords = null;
+        if (_tryBefore is not { } before) return;
+        _tryBefore = null;
+        Restore(before);
     }
 
     // ---- harmonise: chords for a melody or a bassline with none ----
@@ -184,6 +232,7 @@ public sealed partial class PlaygroundViewModel
     /// </summary>
     async Task RefreshHarmoniseAsync()
     {
+        if (_tryBefore is not null) return;   // the ones listed are tried from, until it's kept or taken back
         var request = ++_harmoniseRequest;
         var layers = PlaygroundSession.Audible(Section).Where(l => l.Role != MidiRoles.Drums).ToList();
         var chordParts = layers.Any(l => l.Clips.Any(c => c.Role == MidiRoles.Chords || c.Role == MidiRoles.Other && l.Role == MidiRoles.Chords));
@@ -203,8 +252,8 @@ public sealed partial class PlaygroundViewModel
         var model = await ModelAsync();
         if (request != _harmoniseRequest) return;
         var ideas = await UiWork.Run(() => Harmoniser.Harmonise(melody, bass, length, tonic, minor, model is null ? null : model.Chance).ToList());
-        if (request != _harmoniseRequest) return;   // edited again meanwhile: the newer call shows its own
-        if (TryingIdea is { } t && HarmoniseIdeas.Contains(t)) BackIdea();
+        // Edited again meanwhile, the newer call shows its own; one being tried meanwhile keeps the ones it came from.
+        if (request != _harmoniseRequest || _tryBefore is not null) return;
         HarmoniseIdeas.Clear();
         foreach (var idea in ideas) HarmoniseIdeas.Add(new ReharmRow(this, idea));
         HarmoniseText = HarmoniseIdeas.Count == 0 ? "" : $"Chords for {HarmoniseIdeas[0].Idea.Before}, in {ChordSymbol.Names[tonic]} {(minor ? "minor" : "major")}";

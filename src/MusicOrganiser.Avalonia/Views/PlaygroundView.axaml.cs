@@ -149,8 +149,8 @@ public partial class PlaygroundView : UserControl, IShortcutPage
     /// <summary>Does a Playground shortcut; the ones that work everywhere are left to the window.</summary>
     public bool RunShortcut(string id, bool repeat) => id.StartsWith("playground.") && DataContext is PlaygroundViewModel vm && vm.RunShortcut(id);
 
-    /// <summary>The piano roll keeps Delete and Backspace for the note under the pointer.</summary>
-    public bool KeepsKey(KeyEventArgs e, string key) => e.Source is PianoRollEditor && key is "Delete" or "Backspace";
+    /// <summary>The piano roll keeps Delete and Backspace for the notes picked or under the pointer, and the arrows for the notes picked.</summary>
+    public bool KeepsKey(KeyEventArgs e, string key) => e.Source is PianoRollEditor roll && (key is "Delete" or "Backspace" || roll.Keeps(key));
 
     TopLevel? _top;
 

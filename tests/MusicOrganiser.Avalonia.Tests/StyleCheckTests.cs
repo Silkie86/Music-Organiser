@@ -79,6 +79,22 @@ public sealed partial class StyleCheckTests
         Assert.True(missing.Count == 0, "These windows don't have the class \"studio\", so they miss the app's look: " + string.Join(", ", missing));
     }
 
+    /// <summary>
+    /// Play buttons all show the one drawn play symbol (<c>views:PlayIcon</c>), never a typed ▶ or ■ (Solomon, 2026-10-27:
+    /// "dont like blue play button make it consitant in th app"): Windows draws a typed ▶ as a blue emoji.
+    /// </summary>
+    [Fact]
+    public void Play_buttons_draw_the_one_play_symbol_and_never_type_it()
+    {
+        var viewModels = Path.Combine(Path.GetDirectoryName(Ui)!, "MusicOrganiser.ViewModels");
+        var files = Pages().Concat(SourceFiles()).Concat(Directory.EnumerateFiles(viewModels, "*.cs", SearchOption.TopDirectoryOnly));
+        var typed = new List<string>();
+        foreach (var file in files)
+            foreach (var (line, i) in File.ReadLines(file).Select((l, i) => (l, i)))
+                if (PlayGlyph().IsMatch(line) && !Regex.IsMatch(line.TrimStart(), "^(//|<!--)")) typed.Add($"{Path.GetFileName(file)}:{i + 1}");
+        Assert.True(typed.Count == 0, "These type a play or stop symbol; use views:PlayIcon instead: " + string.Join(", ", typed));
+    }
+
     [Fact]
     public void Pages_leave_buttons_and_boxes_to_the_shared_look()
     {
@@ -178,6 +194,8 @@ public sealed partial class StyleCheckTests
 
     [GeneratedRegex(@"=""(#[0-9A-Fa-f]{6,8})""")]
     private static partial Regex Colour();
+    [GeneratedRegex("[▶■⏹⏵►◼]")]
+    private static partial Regex PlayGlyph();
 }
 
 /// <summary>The studio look reaching what pops up from a page: a flyout's buttons look like the page's.</summary>
@@ -258,6 +276,27 @@ public sealed class StudioLookTests
         var cross = global::Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(box).OfType<global::Avalonia.Controls.Button>().Single();
         Assert.Equal(0, cross.MinHeight);
         Assert.Equal(global::Avalonia.Media.Brushes.Transparent, cross.Background);
+        window.Close();
+    }
+
+    [global::Avalonia.Headless.XUnit.AvaloniaFact]
+    public void The_play_symbol_takes_the_colour_of_its_buttons_words()
+    {
+        var plain = new global::MusicOrganiser.Avalonia.Views.PlayIcon();
+        var main = new global::MusicOrganiser.Avalonia.Views.PlayIcon { IsPlaying = true };
+        var off = new global::MusicOrganiser.Avalonia.Views.PlayIcon();
+        var window = Show(new global::Avalonia.Controls.StackPanel { Children =
+        {
+            new global::Avalonia.Controls.Button { Content = plain },
+            new global::Avalonia.Controls.Button { Content = main, Classes = { "accent" } },
+            new global::Avalonia.Controls.Button { Content = off, IsEnabled = false },
+        } });
+
+        object? Brush(string key) => global::Avalonia.Controls.ResourceNodeExtensions.TryFindResource(window, key, out var b) ? b : null;
+        Assert.Same(Brush("TextBrush"), global::Avalonia.Controls.Documents.TextElement.GetForeground(plain));
+        Assert.Same(Brush("OnAccentBrush"), global::Avalonia.Controls.Documents.TextElement.GetForeground(main));
+        Assert.Same(Brush("FaintBrush"), global::Avalonia.Controls.Documents.TextElement.GetForeground(off));
+        Assert.Equal(new global::Avalonia.Size(12, 12), plain.Bounds.Size);
         window.Close();
     }
 

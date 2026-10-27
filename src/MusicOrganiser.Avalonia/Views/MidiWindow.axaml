@@ -23,10 +23,11 @@
         <WrapPanel DockPanel.Dock="Top" Margin="16,0,16,10" IsVisible="{Binding HasChannels}">
             <Button Command="{Binding PlayAllCommand}" Margin="0,0,12,0" Padding="10,5"
                     ToolTip.Tip="Hear every channel together. Click along any channel to jump.">
-                <Panel>
-                    <TextBlock Text="▶  Play all" IsVisible="{Binding !IsPlayingAll}" />
-                    <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingAll}" />
-                </Panel>
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <views:PlayIcon IsPlaying="{Binding IsPlayingAll}" />
+                    <TextBlock Text="Play all" IsVisible="{Binding !IsPlayingAll}" />
+                    <TextBlock Text="Stop" IsVisible="{Binding IsPlayingAll}" />
+                </StackPanel>
             </Button>
             <Border Classes="dragChip" views:FileDrag.Source="{Binding}" views:FileDrag.AllOf="{Binding #ChannelList}"
                     ToolTip.Tip="Drag into your DAW: one MIDI file per channel, landing as tracks in this order">
@@ -48,10 +49,7 @@
                         <Path Classes="grip" />
                         <Button Grid.Column="1" Command="{Binding PlayCommand}" Padding="9,5" Margin="2,0,10,0" VerticalAlignment="Center"
                                 ToolTip.Tip="Listen to this channel">
-                            <Panel>
-                                <TextBlock Text="▶" IsVisible="{Binding !IsPlaying}" />
-                                <TextBlock Text="■" IsVisible="{Binding IsPlaying}" />
-                            </Panel>
+                            <views:PlayIcon IsPlaying="{Binding IsPlaying}" />
                         </Button>
                         <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="0,0,12,0">
                             <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}" />

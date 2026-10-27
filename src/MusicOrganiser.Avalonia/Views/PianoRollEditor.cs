@@ -22,6 +22,10 @@ namespace MusicOrganiser.Avalonia.Views;
 /// other notes' starts and ends (<see cref="SnapObjects"/>), the nearest winning; hold Shift to place freely. New notes take
 /// the length and velocity of the last note clicked, like FL Studio. <see cref="NoteLabels"/> writes names on the notes.
 /// The part repeats faintly when the guide is longer, and editing a repeat edits the part.
+/// Notes can be picked together (Solomon, 2026-10-27: "you should be able to select a few notes"): Ctrl+click picks one more,
+/// Ctrl+drag on an empty spot picks all in a box, Ctrl+A picks them all and Esc lets go; picked notes drag, move with the
+/// arrow keys (Shift: an octave, or a beat) and delete together. With <see cref="SnapChord"/> a note dragged, put in or
+/// moved goes only to keys where <see cref="ChordTest"/> says it goes with the chords.
 /// Drag along the bar numbers to set loop points (Solomon, 2026-10-17: "there should be a way to set the loop points"):
 /// they snap to bars (Shift: beats), their ends can be dragged, and a right-click there clears them. A click plays from there.
 /// </summary>
@@ -67,6 +71,17 @@ public sealed class PianoRollEditor : Control
     public static readonly StyledProperty<Func<NoteEvent, bool>?> ClashTestProperty =
         AvaloniaProperty.Register<PianoRollEditor, Func<NoteEvent, bool>?>(nameof(ClashTest));
 
+    /// <summary>The notes picked, as <see cref="Notes"/> has them: dragged, moved, deleted and snapped together.</summary>
+    public static readonly StyledProperty<IReadOnlyList<NoteEvent>?> SelectionProperty =
+        AvaloniaProperty.Register<PianoRollEditor, IReadOnlyList<NoteEvent>?>(nameof(Selection), defaultBindingMode: global::Avalonia.Data.BindingMode.TwoWay);
+    public IReadOnlyList<NoteEvent>? Selection { get => GetValue(SelectionProperty); set => SetValue(SelectionProperty, value); }
+    /// <summary>Whether a note (placed at its time on the roll) goes with the chord under it, for <see cref="SnapChord"/>.</summary>
+    public static readonly StyledProperty<Func<NoteEvent, bool>?> ChordTestProperty =
+        AvaloniaProperty.Register<PianoRollEditor, Func<NoteEvent, bool>?>(nameof(ChordTest));
+    public Func<NoteEvent, bool>? ChordTest { get => GetValue(ChordTestProperty); set => SetValue(ChordTestProperty, value); }
+    public static readonly StyledProperty<bool> SnapChordProperty = AvaloniaProperty.Register<PianoRollEditor, bool>(nameof(SnapChord));
+    public bool SnapChord { get => GetValue(SnapChordProperty); set => SetValue(SnapChordProperty, value); }
+
     public static readonly StyledProperty<bool> SnapGridProperty = AvaloniaProperty.Register<PianoRollEditor, bool>(nameof(SnapGrid), true);
     public static readonly StyledProperty<bool> SnapRelativeProperty = AvaloniaProperty.Register<PianoRollEditor, bool>(nameof(SnapRelative), true);
     public static readonly StyledProperty<bool> SnapObjectsProperty = AvaloniaProperty.Register<PianoRollEditor, bool>(nameof(SnapObjects), true);
@@ -101,7 +116,7 @@ public sealed class PianoRollEditor : Control
     static PianoRollEditor() =>
         AffectsRender<PianoRollEditor>(NotesProperty, GuideProperty, PeriodProperty, LengthProperty, PositionProperty,
                                        PartStartProperty, PartEndProperty, SectionProperty, ClashTestProperty, NoteLabelsProperty, DegreeOfProperty,
-                                       StrengthOfProperty, WouldBeProperty, FitGuideProperty, OverlayProperty);
+                                       StrengthOfProperty, WouldBeProperty, FitGuideProperty, OverlayProperty, SelectionProperty);
 
     public Func<NoteEvent, bool>? ClashTest { get => GetValue(ClashTestProperty); set => SetValue(ClashTestProperty, value); }
 
@@ -121,6 +136,49 @@ public sealed class PianoRollEditor : Control
     {
         Focusable = true;
         ClipToBounds = true;
+    }
+
+    // ---- notes picked together ----
+
+    HashSet<NoteEvent> _picked = [];
+    List<int>? _group;              // the picked notes being dragged with the one grabbed, by their place in _working
+    List<NoteEvent>? _groupFrom;    // and where each was when the drag began
+    Point? _boxFrom;                // a Ctrl+drag box picking the notes in it
+    Point _boxTo;
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == SelectionProperty) _picked = Selection is { } picked ? [.. picked] : [];
+        // Notes changed by something else (taken away, or the chords moved them): only the ones still there stay picked.
+        else if (change.Property == NotesProperty && _picked.Count > 0 && _working is null)
+        {
+            var notes = Notes ?? [];
+            if (!_picked.All(notes.Contains)) Pick(notes.Where(_picked.Contains));
+        }
+    }
+
+    void Pick(IEnumerable<NoteEvent> notes)
+    {
+        var list = notes.Distinct().ToList();
+        SetCurrentValue(SelectionProperty, list.Count == 0 ? null : list);
+    }
+
+    /// <summary>Keys the piano roll keeps from the page while notes are picked: the arrows move them.</summary>
+    public bool Keeps(string key) =>
+        _picked.Count > 0 && key is "Up" or "Down" or "Shift+Up" or "Shift+Down" or "Left" or "Right" or "Shift+Left" or "Shift+Right";
+
+    /// <summary><paramref name="note"/>'s key moved to one that goes with the chords there, when snapping to them (<paramref name="from"/>: the go round it's in).</summary>
+    int ChordKey(NoteEvent note, long from, int prefer) =>
+        SnapChord && ChordTest is { } test ? ClipRow.NearestFit(note with { Start = from + note.Start }, test, prefer) : note.Key;
+
+    /// <summary>The next key up or down from <paramref name="note"/>'s that goes with the chords there, within an octave.</summary>
+    int NextChordKey(NoteEvent note, int way)
+    {
+        if (ChordTest is not { } test) return Math.Clamp(note.Key + way, 0, 127);
+        for (var key = note.Key + way; key >= 0 && key <= 127 && Math.Abs(key - note.Key) <= 12; key += way)
+            if (test(note with { Key = key, Start = From + note.Start })) return key;
+        return note.Key;
     }
 
     /// <summary>The strip along the top that shows bars, plays from where it's clicked and sets loop points when dragged.</summary>
@@ -324,6 +382,24 @@ public sealed class PianoRollEditor : Control
         }
         if (p.X < Keys) return;
         var hit = HitTest(p, out var rightEnd, out var repeat);
+        var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        if (ctrl && point.IsLeftButtonPressed)
+        {
+            // Ctrl+click picks a note or lets it go; Ctrl+drag on an empty spot picks the notes in a box.
+            if (hit >= 0)
+            {
+                var note = Current[hit];
+                Pick(_picked.Contains(note) ? _picked.Where(n => n != note) : _picked.Append(note));
+            }
+            else
+            {
+                _boxFrom = _boxTo = p;
+                e.Pointer.Capture(this);
+            }
+            e.Handled = true;
+            InvalidateVisual();
+            return;
+        }
         if (point.IsRightButtonPressed || (e.ClickCount == 2 && hit >= 0))
         {
             if (hit >= 0) Commit(Current.Where((_, i) => i != hit).ToList());
@@ -347,6 +423,8 @@ public sealed class PianoRollEditor : Control
             var tick = (at - From) % Loop;
             _grabFrom = at - tick;
             var note = new NoteEvent(tick, Math.Min(_lastLength, Loop - tick), KeyAt(p.Y, low, high), _lastVelocity);
+            note = note with { Key = ChordKey(note, _grabFrom, -1) };
+            if (_picked.Count > 0) Pick([]);   // a click off the notes lets go of the ones picked
             _working.Add(note);
             _index = _working.Count - 1;
             _drag = Drag.Resize;
@@ -364,6 +442,13 @@ public sealed class PianoRollEditor : Control
             _drag = rightEnd ? Drag.Resize : Drag.Move;
             _grabTick = TickAt(p.X, false);
             _grabKey = KeyAt(p.Y, low, high);
+            // A picked note drags the others picked with it; any other is picked on its own.
+            if (_picked.Contains(_grabbed) && _picked.Count > 1 && _drag == Drag.Move)
+            {
+                _group = Enumerable.Range(0, _working.Count).Where(i => _picked.Contains(_working[i])).ToList();
+                _groupFrom = _group.Select(i => _working[i]).ToList();
+            }
+            else if (!_picked.Contains(_grabbed) || _picked.Count > 1) Pick([_grabbed]);
         }
         e.Pointer.Capture(this);
         e.Handled = true;
@@ -400,6 +485,12 @@ public sealed class PianoRollEditor : Control
             InvalidateVisual();
             return;
         }
+        if (_boxFrom is not null)
+        {
+            _boxTo = p;
+            InvalidateVisual();
+            return;
+        }
         if (_working is null || _index < 0)
         {
             var onRuler = p.Y <= Ruler && p.X > Keys;
@@ -421,6 +512,20 @@ public sealed class PianoRollEditor : Control
             var length = Math.Max(snap ? Sixteenth : 4, endTick - _grabbed.Start);
             _working[_index] = _grabbed with { Length = Math.Min(length, loop - _grabbed.Start) };
         }
+        else if (_group is { } group && _groupFrom is { } was)
+        {
+            // The picked notes move together, as far as the one grabbed, all staying inside the go round.
+            var delta = TickAt(p.X, false) - _grabTick;
+            var start = _grabbed.Start + delta;
+            if (snap) start = SnapTick(start, _grabbed.Start, [0, _grabbed.Length]);
+            var by = Math.Clamp(start - _grabbed.Start, -was.Min(n => n.Start), Math.Max(-was.Min(n => n.Start), was.Min(n => loop - n.Length - n.Start)));
+            var up = Math.Clamp(KeyAt(p.Y, low, high) - _grabKey, -was.Min(n => n.Key), 127 - was.Max(n => n.Key));
+            for (var j = 0; j < group.Count; j++)
+            {
+                var n = was[j] with { Start = was[j].Start + by, Key = was[j].Key + up };
+                _working[group[j]] = n with { Key = ChordKey(n, _grabFrom, up) };
+            }
+        }
         else
         {
             var delta = TickAt(p.X, false) - _grabTick;
@@ -429,7 +534,8 @@ public sealed class PianoRollEditor : Control
             if (snap) start = SnapTick(start, _grabbed.Start, [0, _grabbed.Length]);
             start = Math.Clamp(start, 0, Math.Max(0, loop - _grabbed.Length));
             var key = Math.Clamp(_grabbed.Key + KeyAt(p.Y, low, high) - _grabKey, 0, 127);
-            _working[_index] = _grabbed with { Start = start, Key = key };
+            var moved = _grabbed with { Start = start, Key = key };
+            _working[_index] = moved with { Key = ChordKey(moved, _grabFrom, key - _grabbed.Key) };
         }
         InvalidateVisual();
     }
@@ -454,7 +560,7 @@ public sealed class PianoRollEditor : Control
             var near = Math.Max(1, (long)(8 * ViewSpan / Math.Max(1, Bounds.Width - Keys)));   // 8 px at this zoom
             for (var i = 0; i < notes.Count; i++)
             {
-                if (i == _index) continue;
+                if (i == _index || _group?.Contains(i) == true) continue;
                 foreach (var edge in new[] { notes[i].Start, notes[i].Start + notes[i].Length })
                     foreach (var a in along)
                         if (Math.Abs(edge - a - raw) <= near) Try(edge - a);
@@ -468,8 +574,11 @@ public sealed class PianoRollEditor : Control
         base.OnPointerCaptureLost(e);
         _panFrom = null;   // an interrupted pan (Alt+Tab, a dialog) mustn't carry on when the pointer next moves
         // So mustn't a note or loop points being dragged: they go back to where they were, and nothing is changed.
-        if (_working is null && _edge == Edge.None) return;
+        _boxFrom = null;
+        if (_working is null && _edge == Edge.None) { InvalidateVisual(); return; }
         _working = null;
+        _group = null;
+        _groupFrom = null;
         _index = -1;
         _drag = Drag.None;
         _newAt = null;
@@ -505,15 +614,43 @@ public sealed class PianoRollEditor : Control
             InvalidateVisual();
             return;
         }
+        if (_boxFrom is { } boxFrom)
+        {
+            // The notes the box touches, in any go round, are picked.
+            _boxFrom = null;
+            e.Pointer.Capture(null);
+            var box = new Rect(boxFrom, _boxTo).Normalize();
+            var (low, high) = Range();
+            var inBox = new List<NoteEvent>();
+            for (long from = From; from < To; from += Loop)
+                foreach (var n in Current)
+                {
+                    if (from + n.Start >= To) continue;
+                    double x0 = X(from + n.Start), x1 = Math.Max(x0 + 3, X(from + n.Start + n.Length)), y = Y(n.Key, low, high);
+                    if (box.Intersects(new Rect(x0, y, x1 - x0, RowHeight(low, high)))) inBox.Add(n);
+                }
+            Pick(inBox);
+            InvalidateVisual();
+            return;
+        }
         if (_working is null) return;
         if (_index >= 0 && _index < _working.Count) _lastLength = _working[_index].Length;
         var changed = _working;
+        // What's picked after the drag: the notes dragged, where they are now (a note put in isn't picked).
+        var picked = _group is { } group ? group.Select(i => changed[i]).ToList()
+                   : _newAt is null && _index >= 0 && _index < changed.Count && _picked.Count > 0 ? [changed[_index]] : null;
         _working = null;
+        _group = null;
+        _groupFrom = null;
         _newAt = null;
         _index = -1;
         _drag = Drag.None;
         e.Pointer.Capture(null);
-        if (!changed.SequenceEqual(Notes ?? [])) Commit(changed);
+        if (!changed.SequenceEqual(Notes ?? []))
+        {
+            if (picked is not null) Pick(picked);
+            Commit(changed);
+        }
         InvalidateVisual();
     }
 
@@ -662,7 +799,7 @@ public sealed class PianoRollEditor : Control
                 if (from + n.Start >= To) continue;
                 var strength = fit is null ? null : StrengthOf!(n with { Start = from + n.Start });
                 var rubs = strength is null && (ClashTest is { } test ? test(n with { Start = from + n.Start }) : Rubs(n, from, guide));
-                var picked = _working is not null && i == _index;
+                var picked = _working is not null ? i == _index || _group?.Contains(i) == true : _picked.Contains(n);
                 var fill = strength is { } s ? fit![(int)s] : rubs ? clash : accent;
                 // Names stay readable: dark on the bright notes, the page's text colour on the faded ones.
                 var ink = strength is FitStrength.Colour or FitStrength.Weak ? text : Brushes.Black;
@@ -680,9 +817,18 @@ public sealed class PianoRollEditor : Control
             // and shaded as it will be, a little fainter.
             var length = Math.Min(_lastLength, Loop - ((hov.Tick - From) % Loop + Loop) % Loop);
             var ghost = new NoteEvent(hov.Tick, length, hov.Key, _lastVelocity);
+            ghost = ghost with { Key = ChordKey(ghost, 0, -1) };   // where snapping to the chords puts it
             var would = fit is null ? null : (WouldBe is { } later && _rested == hov ? later : StrengthOf)!(ghost);
             using (dc.PushOpacity(would is null ? 0.25 : 0.7 * (0.4 + 0.6 * Math.Clamp(_lastVelocity / 110.0, 0, 1))))
                 Note(dc, would is { } s ? fit![(int)s] : accent, null, hov.Tick, length, hov.Key, low, high);
+        }
+
+        // The box being dragged out to pick notes.
+        if (_boxFrom is { } boxFrom)
+        {
+            var box = new Rect(boxFrom, _boxTo).Normalize();
+            using (dc.PushOpacity(0.15)) dc.FillRectangle(accent, box);
+            dc.DrawRectangle(null, new Pen(accent, 1), box);
         }
 
         if (Position >= 0)
@@ -785,6 +931,54 @@ public sealed class PianoRollEditor : Control
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        if (e.Key == Key.A && ctrl)
+        {
+            Pick(Current);
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.Escape && _picked.Count > 0)
+        {
+            Pick([]);
+            e.Handled = true;
+            return;
+        }
+        if (_picked.Count > 0 && _working is null)
+        {
+            var notes = Current;
+            if (e.Key is Key.Delete or Key.Back)
+            {
+                Commit(notes.Where(n => !_picked.Contains(n)).ToList());
+                Pick([]);
+                e.Handled = true;
+                return;
+            }
+            // The arrows move the picked notes: up and down a semitone (or to the next note of the chords when snapping
+            // to them), Shift an octave; along by a sixteenth, Shift a beat, staying inside the go round.
+            int up = e.Key switch { Key.Up => 1, Key.Down => -1, _ => 0 };
+            long along = e.Key switch { Key.Right => 1, Key.Left => -1, _ => 0 } * (shift ? Beat : Sixteenth);
+            if (up != 0 || along != 0)
+            {
+                var picked = notes.Where(_picked.Contains).ToList();
+                if (along != 0) along = Math.Clamp(along, -picked.Min(n => n.Start), Math.Max(0, picked.Min(n => Loop - n.Length - n.Start)));
+                NoteEvent Moved(NoteEvent n)
+                {
+                    if (!_picked.Contains(n)) return n;
+                    var key = up == 0 ? n.Key : shift ? Math.Clamp(n.Key + 12 * up, 0, 127) : SnapChord ? NextChordKey(n, up) : Math.Clamp(n.Key + up, 0, 127);
+                    return n with { Key = key, Start = n.Start + along };
+                }
+                var moved = notes.Select(Moved).ToList();
+                if (!moved.SequenceEqual(notes))
+                {
+                    Pick(picked.Select(Moved));
+                    Commit(moved);
+                }
+                e.Handled = true;
+                return;
+            }
+        }
         if (e.Key is Key.Delete or Key.Back && _hover is { } hov)
         {
             var notes = Current;

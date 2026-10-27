@@ -291,20 +291,21 @@ public class ChordTrackTests : IDisposable
         Assert.Equal("Follows the chord track", p.SelectedClip!.FitText);
         Assert.Equal("Keep its place", p.SelectedClip.FollowPick);
 
-        // Moved with the root instead, from the clip's menu.
+        // Moved with the root instead, from the clip's menu: up a fourth, with G7's own 3rd (B, not B♭).
         Assert.True(p.RunShortcut("playground.followRoot"));
         Assert.True(p.IsTicked("playground.followRoot"));
-        Assert.Equal(Dm7.Select(k => k + 5), keys.Layer.Notes.Where(n => n.Start == Bar).Select(n => n.Key));
+        static int Third(int k) => k % 12 == 5 ? 1 : 0;   // Dm7's minor 3rd, F, is a major 3rd on a dominant chord
+        Assert.Equal(Dm7.Select(k => k + 5 + Third(k)), keys.Layer.Notes.Where(n => n.Start == Bar).Select(n => n.Key));
 
         // Up an octave by hand: it stays as it is when the chords change, until Follow the chords again.
         Assert.True(p.RunShortcut("playground.octaveUp"));
         var asItIs = keys.Layer.Notes.ToList();
-        Assert.Equal(Dm7.Select(k => k + 17), asItIs.Where(n => n.Start == Bar).Select(n => n.Key));
+        Assert.Equal(Dm7.Select(k => k + 17 + Third(k)), asItIs.Where(n => n.Start == Bar).Select(n => n.Key));
         p.CurrentSection.ChordTrack[1].Chord = Chord("C7");
         p.DragChordCommand.Execute(new ChordDrag(Bar / 2, Bar / 2, Bar + Bar / 2, 10, true));   // any change to the track
         Assert.Equal(asItIs, keys.Layer.Notes);
         Assert.True(p.RunShortcut("playground.fitAgain"));
-        Assert.Equal(Dm7.Select(k => k + 12 - 2), keys.Layer.Notes.Where(n => n.Start == Bar).Select(n => n.Key));   // down a tone to C7, an octave up
+        Assert.Equal(Dm7.Select(k => k + 12 - 2 + Third(k)), keys.Layer.Notes.Where(n => n.Start == Bar).Select(n => n.Key));   // down a tone to C7, an octave up
     }
 
     [Theory]

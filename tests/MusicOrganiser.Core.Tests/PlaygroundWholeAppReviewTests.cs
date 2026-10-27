@@ -177,11 +177,10 @@ public class PlaygroundWholeAppReviewTests : IDisposable
         p.AddNextChord(Chord("Cmaj7"));
         Assert.Equal(3, p.Bars);
 
-        // The new bar is heard, from a plain chord part, and the muted keys play it too once they're heard again.
+        // The new bar is heard from the chord track, and the muted keys go round into it and play it once they're heard again.
         var c = new[] { 0, 4, 7, 11 };
-        var plain = p.Layers.Single(l => l.Layer != keys).Layer;
-        Assert.Single(plain.Clips, k => k.Start < 3 * Bar && k.End > 2 * Bar);
-        Assert.All(plain.Notes.Where(n => n.Start >= 2 * Bar), n => Assert.Contains(n.Key % 12, c));
+        Assert.Single(p.Layers);
+        Assert.Equal((2L * Bar, "Cmaj7"), (p.CurrentSection.ChordTrack[^1].Start, p.CurrentSection.ChordTrack[^1].Chord.Name));
         p.Layers.Single(l => l.Layer == keys).MuteCommand.Execute(null);
         var bar3 = keys.Notes.Where(n => n.Start >= 2 * Bar).ToList();
         Assert.NotEmpty(bar3);
@@ -264,7 +263,7 @@ public class PlaygroundWholeAppReviewTests : IDisposable
     }
 
     [Fact]
-    public void A_plain_chord_track_added_never_shares_its_file_with_a_track_named_chords()
+    public void A_next_chord_goes_on_the_chord_track_never_on_a_new_track_beside_one_named_chords()
     {
         using var page = Fresh();
         var p = page.P;
@@ -273,7 +272,8 @@ public class PlaygroundWholeAppReviewTests : IDisposable
         p.Layers[0].Name = "chords";
         p.Layers[0].MuteCommand.Execute(null);
         p.AddNextChord(Chord("Cmaj7"));
-        Assert.Equal(["chords", "Chords 2"], p.Layers.Select(l => l.Name));
+        Assert.Equal(["chords"], p.Layers.Select(l => l.Name));
+        Assert.Equal("Cmaj7", p.CurrentSection.ChordTrack[^1].Chord.Name);
     }
 
     [Fact]

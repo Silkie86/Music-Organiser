@@ -187,10 +187,11 @@ public class PlaygroundNotesTests(ITestOutputHelper output) : IDisposable
             Assert.NotEmpty(clip.Clip.Under);
             Assert.False(clip.NothingToFollow);
             Assert.Equal("Follows the chord track", clip.FitText);
-            // The keys stay as they are; the arp, on D, moves with the root: as it is over Dm7, up to G over G7.
+            // The keys stay as they are; the arp, on D, moves with the root: as it is over Dm7, up to G over G7, with G7's
+            // own 3rd (B, not the B♭ a Dm7 arp moved up would play: Solomon, 2026-10-27, "silly decisions musically").
             var after = p.Layers.Select(l => Show(l.Layer.Notes)).ToList();
             Assert.Equal(before[0], after[0]);
-            Assert.Equal(arp.Select(n => n.Start < Bar ? n.Key : n.Key + 5), row.Layer.Notes.Select(n => n.Key));
+            Assert.Equal(arp.Select(n => n.Start < Bar ? n.Key : n.Key + 5 + (n.Key % 12 == 5 ? 1 : 0)), row.Layer.Notes.Select(n => n.Key));
 
             // Change the last chord: the arp moves with its root there, every note by the same step.
             var last = p.Chords[^1];

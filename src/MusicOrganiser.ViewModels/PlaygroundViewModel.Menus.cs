@@ -44,6 +44,7 @@ public sealed partial class PlaygroundViewModel
                      M("Follow the chords again", "playground.fitAgain"), M("Smooth inversions", "playground.smooth"), Sep,
                      M("Follow: nudge clashes", "playground.followNudge"), M("Follow: keep its place in the chord", "playground.followDegree"),
                      M("Follow: move with the root", "playground.followRoot"), M("Don't follow the chords", "playground.followNone"), Sep,
+                     M("Snap notes to the chords", "playground.snapToChords"), M("Snap to chord while moving notes", "playground.snapChord"), Sep,
                      M("Find alternatives", "playground.alternatives")]),
         new("Track", [M("Mute", "playground.mute"), M("Solo", "playground.solo"), Sep,
                       M("Duplicate track", "playground.duplicateTrack"), M("Delete track", "playground.deleteTrack")]),
@@ -66,7 +67,7 @@ public sealed partial class PlaygroundViewModel
         M("Cut", "playground.cut"), M("Copy", "playground.copy"), M("Paste", "playground.paste"), M("Duplicate", "playground.duplicate"),
         M("Delete", "playground.delete"), Sep, M("Split", "playground.split"), M("Rename", "playground.rename"), Sep,
         M("Find alternatives", "playground.alternatives"), M("Follow the chords again", "playground.fitAgain"),
-        M("Smooth inversions", "playground.smooth"), Sep,
+        M("Smooth inversions", "playground.smooth"), M("Snap notes to the chords", "playground.snapToChords"), Sep,
         M("Follow: nudge clashes", "playground.followNudge"), M("Follow: keep its place in the chord", "playground.followDegree"),
         M("Follow: move with the root", "playground.followRoot"), M("Don't follow the chords", "playground.followNone"), Sep,
         M("Up an octave", "playground.octaveUp"), M("Down an octave", "playground.octaveDown"), Sep, Keys,
@@ -120,7 +121,8 @@ public sealed partial class PlaygroundViewModel
             "playground.delete" => _chordLaneLast ? PickedChord is { IsSet: true } : clip is not null,
             "playground.cut" or "playground.copy" or "playground.duplicate" or "playground.split" or
             "playground.up" or "playground.down" or "playground.octaveUp" or "playground.octaveDown" or "playground.alternatives" => clip is not null,
-            "playground.followNudge" or "playground.followDegree" or "playground.followRoot" or "playground.followNone" => clip is { IsDrums: false },
+            "playground.followNudge" or "playground.followDegree" or "playground.followRoot" or "playground.followNone" or
+            "playground.snapToChords" => clip is { IsDrums: false },
             _ => true,
         };
     }
@@ -134,6 +136,7 @@ public sealed partial class PlaygroundViewModel
         "playground.followBitwig" => FollowBitwig,
         "playground.playInBitwig" => PlayInBitwig,
         "playground.hearChordTrack" => HearChordTrack,
+        "playground.snapChord" => SnapChord,
         "playground.foldRoll" => !PianoFolded,
         "playground.mute" => (SelectedClip?.Track ?? SelectedLayer)?.Layer.Muted == true,
         "playground.solo" => (SelectedClip?.Track ?? SelectedLayer)?.Layer.Solo == true,
@@ -154,7 +157,7 @@ public sealed partial class PlaygroundViewModel
     /// <summary>Whether a menu line has a tick box at all.</summary>
     public static bool IsToggle(string id) =>
         id is "playground.jazz" or "playground.classical" or "playground.loop" or "playground.hearChordTrack" or "playground.foldRoll" or "playground.mute" or "playground.solo" or
-            "playground.followBitwig" or "playground.playInBitwig" ||
+            "playground.followBitwig" or "playground.playInBitwig" or "playground.snapChord" ||
         FollowOf(id) is not null;
 
     // ---- copy and paste ----
@@ -250,6 +253,7 @@ public sealed partial class PlaygroundViewModel
             case "playground.keepHeardChords": KeepHeardChords(); return true;
             case "playground.chordsFromBitwig": _ = ChordsFromBitwigCommand.ExecuteAsync(null); return true;
             case "playground.hearChordTrack": HearChordTrack = !HearChordTrack; return true;
+            case "playground.snapChord": SnapChord = !SnapChord; return true;
             case "playground.followBitwig": FollowBitwig = !FollowBitwig; return true;
             case "playground.playInBitwig": PlayInBitwig = !PlayInBitwig; return true;
             case "playground.tabWrite": RightTab = WriteTab; return true;
@@ -274,6 +278,7 @@ public sealed partial class PlaygroundViewModel
             case "playground.copy": CopyClip(clip, cut: false); return true;
             case "playground.cut": CopyClip(clip, cut: true); return true;
             case "playground.alternatives": FindAlternatives(clip); return true;
+            case "playground.snapToChords": if (clip.IsDrums) return false; SelectedClip = clip; SnapToChords(); return true;
         }
         if (FollowOf(id) is { } follow && !clip.IsDrums) { SetFollow(clip, follow); return true; }
         return false;

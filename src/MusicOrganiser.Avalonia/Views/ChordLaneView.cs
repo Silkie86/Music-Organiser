@@ -37,6 +37,10 @@ public sealed class ChordLaneView : Control
     public static readonly StyledProperty<IReadOnlyList<ChordCell>?> ProposedProperty =
         AvaloniaProperty.Register<ChordLaneView, IReadOnlyList<ChordCell>?>(nameof(Proposed));
 
+    /// <summary>Run with the tick double-clicked (Solomon, 2026-10-27: "should be able to double click chord track to add a chord").</summary>
+    public static readonly StyledProperty<ICommand?> AddCommandProperty = AvaloniaProperty.Register<ChordLaneView, ICommand?>(nameof(AddCommand));
+    public ICommand? AddCommand { get => GetValue(AddCommandProperty); set => SetValue(AddCommandProperty, value); }
+
     /// <summary>Run with a <see cref="ChordDrag"/> at each step of stretching or sliding a chord-track chord, the last one marked done.</summary>
     public static readonly StyledProperty<ICommand?> DragCommandProperty = AvaloniaProperty.Register<ChordLaneView, ICommand?>(nameof(DragCommand));
     /// <summary>The grid dragged chords land on, in ticks, while <see cref="SnapGrid"/> is on.</summary>
@@ -132,8 +136,17 @@ public sealed class ChordLaneView : Control
     {
         base.OnPointerPressed(e);
         var x = e.GetPosition(this).X;
-        if (HitAt(x) is not { } hit) return;
         var point = e.GetCurrentPoint(this).Properties;
+        // A double-click adds a chord there, over a gap as well as on a chord.
+        if (point.IsLeftButtonPressed && e.ClickCount == 2 && x >= Inset && AddCommand is { } add)
+        {
+            _drag = null;
+            var tick = (long)((ViewFrom + (x - Inset) / Math.Max(1, Bounds.Width - Inset) * Shown) * Length);
+            if (tick >= 0 && tick < Length && add.CanExecute(tick)) add.Execute(tick);
+            e.Handled = true;
+            return;
+        }
+        if (HitAt(x) is not { } hit) return;
         if (point.IsLeftButtonPressed && GripAt(hit, x) is { } grip)
         {
             // Picked on letting go, if it wasn't dragged: a drag only stretches or moves it.
@@ -166,7 +179,7 @@ public sealed class ChordLaneView : Control
             : Pointing;
         if (hit == _hover) return;
         _hover = hit;
-        ToolTip.SetTip(this, hit is null ? null : PickCommand is null ? hit.Tip : $"{hit.Tip}\nClick for ways to change it");
+        ToolTip.SetTip(this, hit is null ? null : PickCommand is null ? hit.Tip : $"{hit.Tip}\nClick for ways to change it, double-click to put a chord in here");
         ToolTip.SetIsOpen(this, hit is not null);
         InvalidateVisual();
     }

@@ -146,9 +146,11 @@
                                         <DataTemplate x:DataType="vm:DuplicateMemberItem">
                                             <Border Classes="row copy" Classes.keep="{Binding IsKeep}" Classes.hidden="{Binding IsHidden}">
                                                 <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12">
-                                                    <Button Classes="icon" Content="▶" ToolTip.Tip="Play / stop"
+                                                    <Button Classes="icon" ToolTip.Tip="Play / stop"
                                                             Command="{Binding $parent[UserControl].((vm:DuplicatesViewModel)DataContext).PlayCommand}"
-                                                            CommandParameter="{Binding}" />
+                                                            CommandParameter="{Binding}">
+                                                        <views:PlayIcon />
+                                                    </Button>
                                                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                         <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Sound.Path}" />
                                                         <TextBlock Text="{Binding Folder}" Classes="muted" FontSize="11.5" TextWrapping="NoWrap"
