@@ -576,12 +576,14 @@ public sealed partial class MainViewModel : ObservableObject
         Activity? card = null;
         try
         {
-            var plugins = force || meter.PluginsStale();
+            // The library is read in the background too: reading it on the window's thread froze the window for 2.1 s
+            // while the computer's memory was nearly full (Solomon's log, 27 Oct).
+            var plugins = force || await Task.Run(meter.PluginsStale);
             if (plugins)
             {
                 card = Activities.Start("Measuring plugin sizes", cancel: cts.Cancel);
-                var before = SpaceSignature(_db.PluginSpaces().Values);
-                var after = SpaceSignature(await Task.Run(() => meter.MeasurePlugins(ct: cts.Token), cts.Token));
+                var (before, after) = await Task.Run(() =>
+                    (SpaceSignature(_db.PluginSpaces().Values), SpaceSignature(meter.MeasurePlugins(ct: cts.Token))), cts.Token);
                 // Only when a size changed: the page keeps its rows (and your place in them) otherwise. The spare copies
                 // are looked for by the same measure, so they're shown either way.
                 if (before != after) await Plugins.ReloadAsync();
@@ -592,8 +594,12 @@ public sealed partial class MainViewModel : ObservableObject
                 card ??= Activities.Start("Measuring song folders", cancel: cts.Cancel);
                 card.Report(100.0 * p.Done / Math.Max(1, p.Total), $"{p.Done:N0} of {p.Total:N0} song folders");
             });
-            var measured = await Task.Run(() => meter.MeasureFolders(folders, progress, cts.Token), cts.Token);
-            if (measured > 0) Projects.ApplySpace(_db.FolderSpaces());
+            var (measured, spaces) = await Task.Run(() =>
+            {
+                var count = meter.MeasureFolders(folders, progress, cts.Token);
+                return (count, count > 0 ? _db.FolderSpaces() : null);
+            }, cts.Token);
+            if (spaces is not null) Projects.ApplySpace(spaces);
             card?.Finish("Disk space measured", measured > 0 ? $"{measured:N0} song folders" : "Plugins measured");
         }
         catch (OperationCanceledException)
